@@ -8,7 +8,22 @@
 pip install -r requirements.txt
 ```
 
-### 2. Ingest Excel Data
+### 2. Ingest Data to Database
+
+**Option A: SQL Ingestion (Recommended)**
+
+Make sure your SQL file is in the `data/` directory (`data/Middle-East-GCC-Car-Database-by-Teoalida-SAMPLE.sql`), then run:
+
+```bash
+python ingest_sql_to_db.py
+```
+
+This will:
+- Read the SQL file
+- Create `intelliwheels.db` SQLite database
+- Populate the database with car data
+
+**Option B: Excel Ingestion**
 
 Make sure `cars.xlsx` is in the project root, then run:
 
@@ -52,7 +67,7 @@ Then visit: `http://localhost:8000`
 ## Troubleshooting
 
 **Database not found?**
-- Run `python ingest_excel_to_db.py` first
+- Run `python ingest_sql_to_db.py` first (or `python ingest_excel_to_db.py` if using Excel)
 
 **Backend not starting?**
 - Check if port 5000 is available

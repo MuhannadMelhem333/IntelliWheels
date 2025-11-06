@@ -33,22 +33,31 @@ A modern, professional car catalog application with AI chatbot integration, buil
 pip install -r requirements.txt
 ```
 
-### 2. Ingest Excel Data to Database
+### 2. Ingest SQL Data to Database
 
-First, make sure your `cars.xlsx` file is in the project root with the following sheets:
+Make sure your SQL file (`data/Middle-East-GCC-Car-Database-by-Teoalida-SAMPLE.sql`) is in the `data/` directory.
+
+Then run the SQL ingestion script:
+
+```bash
+python ingest_sql_to_db.py
+```
+
+This will create `intelliwheels.db` and populate it with data from the SQL file.
+
+**Alternative: Excel Ingestion**
+
+If you prefer to use Excel files instead, place your `cars.xlsx` file in the project root with the following sheets:
 - Make-Model-Year
 - Make-Model
 - Basic Specs
 - Engine Specs
 - Statistics
 
-Then run the ingestion script:
-
+Then run:
 ```bash
 python ingest_excel_to_db.py
 ```
-
-This will create `intelliwheels.db` and populate it with data from all 5 Excel sheets.
 
 ### 3. Configure Gemini API Key
 
