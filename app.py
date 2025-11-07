@@ -146,6 +146,64 @@ def init_db():
     
     conn.commit()
     conn.close()
+    
+    # Migrate favorites table if needed (add user_id column if missing)
+    migrate_favorites_table()
+
+def migrate_favorites_table():
+    """Migrate favorites table to add user_id column if it doesn't exist"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    try:
+        # Check if favorites table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='favorites'")
+        if not cursor.fetchone():
+            print("✅ Favorites table doesn't exist, will be created by init_db()")
+            conn.close()
+            return
+        
+        # Check if user_id column exists
+        cursor.execute("PRAGMA table_info(favorites)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'user_id' not in columns:
+            print("⚠️ Favorites table missing user_id column, migrating...")
+            
+            # Get existing data (if any)
+            cursor.execute("SELECT car_id FROM favorites")
+            existing_favorites = cursor.fetchall()
+            
+            # Drop old table
+            cursor.execute("DROP TABLE IF EXISTS favorites")
+            
+            # Create new table with user_id
+            cursor.execute('''
+                CREATE TABLE favorites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    car_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(car_id, user_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+            
+            # Note: We can't restore old favorites without user_id, so they're lost
+            # This is expected behavior for a migration
+            if existing_favorites:
+                print(f"⚠️ Note: {len(existing_favorites)} old favorites without user_id were removed during migration")
+            
+            conn.commit()
+            print("✅ Favorites table migrated successfully")
+        else:
+            print("✅ Favorites table already has user_id column")
+            
+    except Exception as e:
+        print(f"❌ Error migrating favorites table: {e}")
+        conn.rollback()
+    finally:
+        conn.close()
 
 # Database helper functions
 def get_db():
@@ -751,6 +809,7 @@ def get_favorites():
         cars = [car_row_to_dict(row) for row in rows]
         conn.close()
         
+        print(f"📋 Retrieved {len(cars)} favorites for user_id={user_id}")
         return jsonify({'success': True, 'cars': cars})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -783,10 +842,12 @@ def add_favorite():
                 VALUES (?, ?)
             ''', (car_id, user_id))
             conn.commit()
+            print(f"✅ Added favorite: user_id={user_id}, car_id={car_id}")
             conn.close()
             return jsonify({'success': True, 'message': 'Added to favorites'})
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as e:
             conn.close()
+            print(f"⚠️ Favorite already exists: user_id={user_id}, car_id={car_id}")
             return jsonify({'success': False, 'error': 'Already in favorites'}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -805,7 +866,9 @@ def remove_favorite(car_id):
             WHERE car_id = ? AND user_id = ?
         ''', (car_id, user_id))
         
+        rows_deleted = cursor.rowcount
         conn.commit()
+        print(f"✅ Removed favorite: user_id={user_id}, car_id={car_id}, rows_deleted={rows_deleted}")
         conn.close()
         
         return jsonify({'success': True, 'message': 'Removed from favorites'})

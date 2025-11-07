@@ -72,7 +72,7 @@ body {
     overflow-x: hidden;
 }
 
-/* Animated Background Gradient */
+/* Optimize background animations */
 body::before {
     content: '';
     position: fixed;
@@ -84,9 +84,10 @@ body::before {
         radial-gradient(circle at 20% 50%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
         radial-gradient(circle at 80% 80%, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
         radial-gradient(circle at 40% 20%, rgba(236, 72, 153, 0.05) 0%, transparent 50%);
-    animation: gradientShift 15s ease infinite;
+    animation: gradientShift 20s ease infinite;
     z-index: -1;
     pointer-events: none;
+    will-change: opacity, transform;
 }
 
 @keyframes gradientShift {
@@ -104,7 +105,8 @@ nav {
     position: sticky;
     top: 0;
     z-index: 1000;
-    transition: all 0.3s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    will-change: border-color, box-shadow;
 }
 
 nav:hover {
@@ -246,13 +248,14 @@ nav:hover {
 
 /* --- Page Content Animations --- */
 .page-content {
-    animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity, transform;
 }
 
 @keyframes fadeInUp {
     from {
         opacity: 0;
-        transform: translateY(30px);
+        transform: translateY(20px);
     }
     to {
         opacity: 1;
@@ -365,12 +368,15 @@ nav:hover {
     border-radius: var(--radius-lg);
     overflow: hidden;
     display: flex;
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease;
     opacity: 0;
-    transform: translateX(-30px) scale(0.95);
+    transform: translateY(20px);
     box-shadow: var(--glass-shadow);
     position: relative;
     margin-bottom: var(--spacing-lg);
+    will-change: transform, opacity; /* GPU acceleration */
+    backface-visibility: hidden; /* Prevent flickering */
+    -webkit-font-smoothing: antialiased;
 }
 
 .car-list-item::before {
@@ -418,7 +424,9 @@ nav:hover {
     min-width: 280px;
     object-fit: cover;
     border-right: 1px solid var(--glass-border);
-    transition: transform 0.4s ease;
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform; /* GPU acceleration */
+    backface-visibility: hidden;
 }
 
 .car-list-item:hover .car-list-img {
@@ -925,10 +933,12 @@ nav:hover {
 .glass-modal-bg {
     backdrop-filter: blur(20px) saturate(180%);
     background: rgba(10, 14, 26, 0.7);
+    will-change: opacity;
 }
 
 #car-info-modal {
-    animation: fadeIn 0.3s ease;
+    animation: fadeIn 0.2s ease;
+    will-change: opacity;
 }
 
 #car-info-modal > div {
@@ -937,14 +947,15 @@ nav:hover {
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-xl);
     box-shadow: var(--glass-shadow), 0 0 60px rgba(0, 212, 255, 0.2);
-    animation: modalSlideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: modalSlideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     max-width: 900px;
+    will-change: transform, opacity;
 }
 
 @keyframes modalSlideUp {
     from {
         opacity: 0;
-        transform: translateY(50px) scale(0.95);
+        transform: translateY(30px) scale(0.95);
     }
     to {
         opacity: 1;
@@ -1100,7 +1111,7 @@ nav:hover {
 /* --- Responsive Design --- */
 @media (max-width: 768px) {
     .car-list-item {
-        flex-direction: column;
+    flex-direction: column;
     }
     
     .car-list-img {
@@ -1117,7 +1128,7 @@ nav:hover {
     
     .filter-controls {
         width: 100%;
-        flex-direction: column;
+    flex-direction: column;
     }
     
     .filter-select {
@@ -1160,12 +1171,21 @@ nav:hover {
     outline-offset: 3px;
 }
 
-/* --- Smooth Transitions for All Interactive Elements --- */
+/* Smooth transitions for all interactive elements */
 button,
 input,
 select,
 a {
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform, opacity;
+}
+
+/* Optimize scrolling performance */
+.chatbot-log,
+.car-list-item,
+.page-content {
+    -webkit-overflow-scrolling: touch;
+    transform: translateZ(0); /* Force GPU acceleration */
 }
 
 /* --- User Name Display --- */

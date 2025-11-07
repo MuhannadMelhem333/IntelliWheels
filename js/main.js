@@ -16,10 +16,12 @@ import {
     showLoadingState,
     hideLoadingState,
     showError,
-    showSuccess
+    showSuccess,
+    refreshDOM
 } from './ui.js';
 import { 
     getCars, 
+    getCar,
     createCar, 
     updateCar, 
     deleteCar, 
@@ -52,6 +54,7 @@ let isLoading = false;
 let conversationHistory = []; // Store conversation history for chatbot
 let isAuthenticated = false; // Authentication state
 let currentUser = null; // Current logged-in user
+let abortController = null; // For canceling API requests
 
 // --- LOCALSTORAGE FUNCTIONS ---
 const Storage = {
@@ -85,15 +88,22 @@ async function fetchFavorites() {
         const response = await getFavorites();
         if (response.success) {
             favorites = response.cars.map(car => car.id);
+            // Save to localStorage as backup
             Storage.saveFavorites(favorites);
+            console.log(`Fetched ${favorites.length} favorites from server`);
+            return favorites;
+        } else {
+            console.warn('Failed to fetch favorites from server:', response.error);
+            // Fallback to localStorage only if API fails
+            favorites = Storage.getFavorites();
             return favorites;
         }
     } catch (error) {
         console.error("Could not fetch favorites:", error);
         // Fallback to localStorage
         favorites = Storage.getFavorites();
+        return favorites;
     }
-    return favorites;
 }
 
 async function loadMakes() {
@@ -110,7 +120,14 @@ async function loadMakes() {
 // --- FILTERING AND RENDERING ---
 async function applyFiltersAndRender() {
     if (isLoading) return;
+    
+    // Cancel previous request if still pending
+    if (abortController) {
+        abortController.abort();
+    }
+    
     isLoading = true;
+    abortController = new AbortController();
     
     try {
         if (DOM.listingsContainer) {
@@ -128,11 +145,17 @@ async function applyFiltersAndRender() {
             sort: sortBy
         };
         
-        const response = await getCars(currentFilters);
+        // Import getCars with signal support
+        const { getCars } = await import('./api.js');
+        const response = await getCars(currentFilters, abortController.signal);
+        
+        // Check if request was cancelled
+        if (response.error === 'Request cancelled') {
+            return;
+        }
         
         if (response.success) {
             allCars = response.cars || [];
-            console.log(`Rendering ${allCars.length} cars`);
             if (DOM.listingsContainer) {
                 renderCarList(allCars, DOM.listingsContainer, favorites);
             }
@@ -165,12 +188,18 @@ async function applyFiltersAndRender() {
                     renderCarList(filtered, DOM.listingsContainer, favorites);
                 }
             } else {
-                showError(DOM.listingsContainer, response.error || "Could not filter cars. Please try again.");
+                if (DOM.listingsContainer) {
+                    showError(DOM.listingsContainer, response.error || "Could not filter cars. Please try again.");
+                }
             }
         }
     } catch (error) {
-        console.error("Filter error:", error);
-        showError(DOM.listingsContainer, "Could not filter cars. Please try again.");
+        if (error.name !== 'AbortError') {
+            console.error("Filter error:", error);
+            if (DOM.listingsContainer) {
+                showError(DOM.listingsContainer, "Could not filter cars. Please try again.");
+            }
+        }
     } finally {
         hideLoadingState();
         isLoading = false;
@@ -183,26 +212,64 @@ async function toggleFavorite(carId) {
         const carCardIcon = document.querySelector(`.favorite-btn[data-car-id="${carId}"]`);
         const isFavorited = favorites.includes(carId);
         
+        let response;
         if (isFavorited) {
-            await removeFavorite(carId);
-            favorites = favorites.filter(id => id !== carId);
-            carCardIcon?.classList.remove('favorited');
-            showSuccess('Removed from favorites');
+            // Remove from favorites
+            response = await removeFavorite(carId);
+            
+            if (response.success) {
+                favorites = favorites.filter(id => id !== carId);
+                if (carCardIcon) carCardIcon.classList.remove('favorited');
+                showSuccess('Removed from favorites');
+            } else {
+                throw new Error(response.error || 'Failed to remove favorite');
+            }
         } else {
-            await addFavorite(carId);
-            favorites.push(carId);
-            carCardIcon?.classList.add('favorited');
-            showSuccess('Added to favorites');
+            // Add to favorites
+            response = await addFavorite(carId);
+            
+            if (response.success) {
+                favorites.push(carId);
+                if (carCardIcon) carCardIcon.classList.add('favorited');
+                showSuccess('Added to favorites');
+            } else {
+                throw new Error(response.error || 'Failed to add favorite');
+            }
         }
         
+        // Only update localStorage if API call succeeded
         Storage.saveFavorites(favorites);
         
-        if (!DOM.pages.favorites.classList.contains('hidden')) {
-            renderFavoritesPage();
+        // Refresh favorites page if currently viewing it
+        if (DOM.pages.favorites && !DOM.pages.favorites.classList.contains('hidden')) {
+            await renderFavoritesPage();
+        }
+        
+        // Update favorite buttons without full re-render for better performance
+        if (DOM.pages.listings && !DOM.pages.listings.classList.contains('hidden')) {
+            document.querySelectorAll('.favorite-btn').forEach(btn => {
+                const btnCarId = parseInt(btn.dataset.carId);
+                if (favorites.includes(btnCarId)) {
+                    btn.classList.add('favorited');
+                } else {
+                    btn.classList.remove('favorited');
+                }
+            });
         }
     } catch (error) {
         console.error("Favorite toggle error:", error);
-        showError(null, "Could not update favorites. Please try again.");
+        showError(null, `Could not update favorites: ${error.message || 'Please try again.'}`);
+        
+        // Re-fetch favorites from server to sync state
+        try {
+            favorites = await fetchFavorites();
+            // Re-render to show correct state
+            if (DOM.pages.listings && !DOM.pages.listings.classList.contains('hidden')) {
+                applyFiltersAndRender();
+            }
+        } catch (syncError) {
+            console.error("Failed to sync favorites:", syncError);
+        }
     }
 }
 
@@ -413,9 +480,16 @@ async function handleLogin(event) {
             setUserData(response.user);
             isAuthenticated = true;
             currentUser = response.user;
+            
+            // Clear old localStorage favorites (they might be from a different user)
+            localStorage.removeItem('carFavorites');
+            favorites = [];
+            
             updateAuthUI();
             showSuccess('Login successful!');
             showPage('listings');
+            
+            // Initialize app and load favorites from server
             await initApp();
         } else {
             const errorMsg = response.error || 'Login failed';
@@ -485,9 +559,16 @@ async function handleSignup(event) {
             setUserData(response.user);
             isAuthenticated = true;
             currentUser = response.user;
+            
+            // Clear old localStorage favorites (they might be from a different user)
+            localStorage.removeItem('carFavorites');
+            favorites = [];
+            
             updateAuthUI();
             showSuccess('Account created successfully!');
             showPage('listings');
+            
+            // Initialize app and load favorites from server
             await initApp();
         } else {
             const errorMsg = response.error || 'Signup failed';
@@ -517,6 +598,12 @@ async function handleLogout() {
         await logout();
         isAuthenticated = false;
         currentUser = null;
+        
+        // Clear favorites from localStorage and memory
+        localStorage.removeItem('carFavorites');
+        favorites = [];
+        conversationHistory = [];
+        
         updateAuthUI();
         showPage('login');
         showSuccess('Logged out successfully');
@@ -607,6 +694,11 @@ async function handleChatSubmit(event) {
             
             // Add bot response to conversation history
             conversationHistory.push({ role: 'bot', text: response.response });
+            
+            // Limit conversation history to prevent memory issues
+            if (conversationHistory.length > 20) {
+                conversationHistory = conversationHistory.slice(-20);
+            }
             
             // Log intent for debugging
             if (response.intent) {
@@ -939,10 +1031,16 @@ function setupEventListeners() {
         }
     });
 
-    // Filters
-    DOM.searchInput.addEventListener('input', debounce(applyFiltersAndRender, 300));
-    DOM.makeFilter.addEventListener('change', applyFiltersAndRender);
-    DOM.sortFilter.addEventListener('change', applyFiltersAndRender);
+    // Filters - optimized debouncing
+    if (DOM.searchInput) {
+        DOM.searchInput.addEventListener('input', debounce(applyFiltersAndRender, 400));
+    }
+    if (DOM.makeFilter) {
+        DOM.makeFilter.addEventListener('change', debounce(applyFiltersAndRender, 200));
+    }
+    if (DOM.sortFilter) {
+        DOM.sortFilter.addEventListener('change', debounce(applyFiltersAndRender, 200));
+    }
 
     // Chatbot
     if (DOM.chatbotSendBtn) {
@@ -963,34 +1061,51 @@ function setupEventListeners() {
     }
 
     // Modal
-    DOM.carInfoCloseBtn.addEventListener('click', () => DOM.carInfoModal.classList.add('hidden'));
-    DOM.carInfoModal.addEventListener('click', (event) => {
-        if (event.target === DOM.carInfoModal) DOM.carInfoModal.classList.add('hidden');
-    });
+    if (DOM.carInfoCloseBtn) {
+        DOM.carInfoCloseBtn.addEventListener('click', () => {
+            if (DOM.carInfoModal) DOM.carInfoModal.classList.add('hidden');
+        });
+    }
+    if (DOM.carInfoModal) {
+        DOM.carInfoModal.addEventListener('click', (event) => {
+            if (event.target === DOM.carInfoModal) DOM.carInfoModal.classList.add('hidden');
+        });
+    }
 }
 
 // --- UTILITY FUNCTIONS ---
 function debounce(func, wait) {
     let timeout;
+    let lastCallTime = 0;
     return function executedFunction(...args) {
-        const later = () => {
+        const now = Date.now();
+        const timeSinceLastCall = now - lastCallTime;
+        
+        // If called recently, extend the timeout
+        if (timeSinceLastCall < wait) {
             clearTimeout(timeout);
+            timeout = setTimeout(() => {
+                lastCallTime = Date.now();
+                func(...args);
+            }, wait - timeSinceLastCall);
+        } else {
+            // Call immediately if enough time has passed
+            clearTimeout(timeout);
+            lastCallTime = now;
             func(...args);
-        };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        }
     };
 }
 
 // --- INITIALIZATION ---
 async function initApp() {
-    // Load favorites
+    // Load favorites from server first (user-specific)
     try {
         favorites = await fetchFavorites();
-        console.log(`Loaded ${favorites.length} favorites`);
+        console.log(`Loaded ${favorites.length} favorites from server`);
     } catch (error) {
         console.error('Failed to load favorites:', error);
-        favorites = Storage.getFavorites();
+        favorites = [];
     }
     
     // Load makes for filter
@@ -1006,6 +1121,7 @@ async function initApp() {
         console.log(`Loaded ${cars.length} cars`);
         
         if (cars.length > 0) {
+            // Render cars with favorites loaded
             applyFiltersAndRender();
             // Load reviews page
             await renderReviewsPage();
@@ -1030,6 +1146,9 @@ async function init() {
     }
     
     console.log('DOM is ready, checking elements...');
+    
+    // Refresh DOM elements to ensure they're all available
+    refreshDOM();
     
     // Check if DOM elements exist
     console.log('Checking DOM elements:');
@@ -1058,6 +1177,10 @@ async function init() {
         updateAuthUI();
         showPage('listings');
         
+        // Clear any old localStorage favorites (they might be from a different user or outdated)
+        localStorage.removeItem('carFavorites');
+        favorites = [];
+        
         // Check backend health
         try {
             const health = await healthCheck();
@@ -1071,7 +1194,7 @@ async function init() {
             console.warn('Health check failed:', error);
         }
         
-        // Initialize app data
+        // Initialize app data (will load favorites from server)
         await initApp();
         
         console.log('✅ IntelliWheels Ready!');

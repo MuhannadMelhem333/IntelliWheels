@@ -1,57 +1,67 @@
 // --- DOM Element Selection (Complete & Merged) ---
-export const DOM = {
-    // Logo
-    logoBtn: document.getElementById('logo-btn'),
-    // Nav Buttons
-    navButtons: {
-        listings: document.getElementById('nav-listings'),
-        reviews: document.getElementById('nav-reviews'),
-        favorites: document.getElementById('nav-favorites'),
-        chatbot: document.getElementById('nav-chatbot'),
-        analytics: document.getElementById('nav-analytics'),
-        addListing: document.getElementById('nav-add-listing'),
-    },
-    // Page Containers
-    pages: {
-        login: document.getElementById('page-login'),
-        signup: document.getElementById('page-signup'),
-        listings: document.getElementById('page-listings'),
-        reviews: document.getElementById('page-reviews'),
-        favorites: document.getElementById('page-favorites'),
-        chatbot: document.getElementById('page-chatbot'),
-        analytics: document.getElementById('page-analytics'),
-        addListing: document.getElementById('page-add-listing'),
-    },
-    // Auth Elements
-    navAuthSection: document.getElementById('nav-auth-section'),
-    navMainSection: document.getElementById('nav-main-section'),
-    userNameDisplay: document.getElementById('user-name-display'),
-    navLogout: document.getElementById('nav-logout'),
-    loginForm: document.getElementById('login-form'),
-    signupForm: document.getElementById('signup-form'),
-    switchToSignup: document.getElementById('switch-to-signup'),
-    switchToLogin: document.getElementById('switch-to-login'),
-    loginError: document.getElementById('login-error'),
-    signupError: document.getElementById('signup-error'),
-    // Filter Controls
-    searchInput: document.getElementById('search-input'),
-    makeFilter: document.getElementById('make-filter'),
-    sortFilter: document.getElementById('sort-filter'),
-    // Content Containers
-    listingsContainer: document.getElementById('listings-container'),
-    reviewsContainer: document.getElementById('reviews-container'),
-    favoritesContainer: document.getElementById('favorites-container'),
-    // "Add Listing" Form
-    addListingForm: document.getElementById('add-listing-form'),
-    // Chatbot UI
-    chatbotLog: document.getElementById('chatbot-log-fullscreen'),
-    chatbotInput: document.getElementById('chatbot-input-fullscreen'),
-    chatbotSendBtn: document.getElementById('chatbot-send-btn-fullscreen'),
-    // Car Details Modal
-    carInfoModal: document.getElementById('car-info-modal'),
-    carInfoContent: document.getElementById('car-info-content'),
-    carInfoCloseBtn: document.getElementById('car-info-close-btn'),
-};
+// Initialize DOM elements with null checks
+function initializeDOM() {
+    return {
+        // Logo
+        logoBtn: document.getElementById('logo-btn'),
+        // Nav Buttons
+        navButtons: {
+            listings: document.getElementById('nav-listings'),
+            reviews: document.getElementById('nav-reviews'),
+            favorites: document.getElementById('nav-favorites'),
+            chatbot: document.getElementById('nav-chatbot'),
+            analytics: document.getElementById('nav-analytics'),
+            addListing: document.getElementById('nav-add-listing'),
+        },
+        // Page Containers
+        pages: {
+            login: document.getElementById('page-login'),
+            signup: document.getElementById('page-signup'),
+            listings: document.getElementById('page-listings'),
+            reviews: document.getElementById('page-reviews'),
+            favorites: document.getElementById('page-favorites'),
+            chatbot: document.getElementById('page-chatbot'),
+            analytics: document.getElementById('page-analytics'),
+            addListing: document.getElementById('page-add-listing'),
+        },
+        // Auth Elements
+        navAuthSection: document.getElementById('nav-auth-section'),
+        navMainSection: document.getElementById('nav-main-section'),
+        userNameDisplay: document.getElementById('user-name-display'),
+        navLogout: document.getElementById('nav-logout'),
+        loginForm: document.getElementById('login-form'),
+        signupForm: document.getElementById('signup-form'),
+        switchToSignup: document.getElementById('switch-to-signup'),
+        switchToLogin: document.getElementById('switch-to-login'),
+        loginError: document.getElementById('login-error'),
+        signupError: document.getElementById('signup-error'),
+        // Filter Controls
+        searchInput: document.getElementById('search-input'),
+        makeFilter: document.getElementById('make-filter'),
+        sortFilter: document.getElementById('sort-filter'),
+        // Content Containers
+        listingsContainer: document.getElementById('listings-container'),
+        reviewsContainer: document.getElementById('reviews-container'),
+        favoritesContainer: document.getElementById('favorites-container'),
+        // "Add Listing" Form
+        addListingForm: document.getElementById('add-listing-form'),
+        // Chatbot UI
+        chatbotLog: document.getElementById('chatbot-log-fullscreen'),
+        chatbotInput: document.getElementById('chatbot-input-fullscreen'),
+        chatbotSendBtn: document.getElementById('chatbot-send-btn-fullscreen'),
+        // Car Details Modal
+        carInfoModal: document.getElementById('car-info-modal'),
+        carInfoContent: document.getElementById('car-info-content'),
+        carInfoCloseBtn: document.getElementById('car-info-close-btn'),
+    };
+}
+
+export const DOM = initializeDOM();
+
+// Re-initialize DOM elements if needed (for dynamic content)
+export function refreshDOM() {
+    Object.assign(DOM, initializeDOM());
+}
 
 /**
  * Shows a specific page and hides others, updates nav button state.
@@ -64,17 +74,24 @@ export function showPage(pageId) {
         if (page) {
             page.classList.add('hidden');
             page.style.opacity = '0';
+            page.style.transform = 'translateY(20px)';
         }
     });
     
     // Show target page
-    if (DOM.pages[pageId]) {
-        DOM.pages[pageId].classList.remove('hidden');
+    const targetPage = DOM.pages[pageId];
+    if (targetPage) {
+        targetPage.classList.remove('hidden');
         // Use requestAnimationFrame for smooth transition
         requestAnimationFrame(() => {
-            DOM.pages[pageId].style.opacity = '1';
-            DOM.pages[pageId].style.transform = 'translateY(0)';
+            if (targetPage) {
+                targetPage.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                targetPage.style.opacity = '1';
+                targetPage.style.transform = 'translateY(0)';
+            }
         });
+    } else {
+        console.warn(`Page "${pageId}" not found in DOM.pages`);
     }
     
     // Update nav button states
@@ -157,6 +174,8 @@ function createCarListItem(car, favorites = []) {
         <img src="${imageUrl}" 
              alt="${car.make} ${car.model}" 
              class="car-list-img"
+             loading="lazy"
+             decoding="async"
              onerror="this.src='https://via.placeholder.com/400x300?text=Image+Error'">
         <div class="car-list-details">
             <div>
@@ -189,6 +208,7 @@ function createCarListItem(car, favorites = []) {
 
 /**
  * Renders a list of cars to a specified container.
+ * Optimized for smooth performance with batched animations.
  * @param {Array<Object>} carList - The cars to render.
  * @param {HTMLElement} container - The container element.
  * @param {Array<string>} favorites - Array of favorited car IDs.
@@ -199,7 +219,13 @@ export function renderCarList(carList, container, favorites = []) {
         return;
     }
     
-    if (!carList || carList.length === 0) {
+    if (!Array.isArray(carList)) {
+        console.error('carList is not an array:', carList);
+        container.innerHTML = `<p class="text-gray-400 text-center text-lg py-8">Error: Invalid car data.</p>`;
+        return;
+    }
+    
+    if (carList.length === 0) {
         container.innerHTML = `<p class="text-gray-400 text-center text-lg py-8">No cars found.</p>`;
         return;
     }
@@ -207,28 +233,38 @@ export function renderCarList(carList, container, favorites = []) {
     // Use DocumentFragment for better performance
     const fragment = document.createDocumentFragment();
     
+    // Batch create all cards first
+    const cards = [];
     carList.forEach((car, index) => {
         try {
             const card = createCarListItem(car, favorites);
             if (card) {
-                // Minimal animation for better performance
                 card.style.opacity = '0';
+                card.style.transform = 'translateY(20px)';
+                cards.push(card);
                 fragment.appendChild(card);
-                
-                // Trigger animation with requestAnimationFrame
-                requestAnimationFrame(() => {
-                    card.style.transition = 'opacity 0.3s ease';
-                    card.style.opacity = '1';
-                });
             }
         } catch (error) {
             console.error(`Error rendering car ${index}:`, error, car);
         }
     });
     
-    // Clear and append in one operation
+    // Clear container once
     container.innerHTML = '';
     container.appendChild(fragment);
+    
+    // Batch animate all cards using requestAnimationFrame for smooth performance
+    requestAnimationFrame(() => {
+        // Animate all cards immediately for instant feedback, then stagger for visual appeal
+        cards.forEach((card, index) => {
+            // Small stagger for visual effect without performance hit
+            setTimeout(() => {
+                card.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+                card.style.opacity = '1';
+                card.style.transform = 'translateY(0)';
+            }, Math.min(index * 15, 200)); // Max 200ms total delay
+        });
+    });
 }
 
 /**
@@ -279,53 +315,45 @@ export function showCarInfoModal(car) {
         statsHtml += '</div></div>';
     }
     
-    const content = `
-        <div class="bg-gray-800 bg-opacity-95 border border-gray-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto transform transition-all">
-            <div id="car-info-content" class="p-6">
-                <div class="flex justify-between items-start mb-4">
-                    <div>
-                        <h2 class="text-3xl font-bold text-white mb-2">${car.make} ${car.model} ${car.year ? `(${car.year})` : ''}</h2>
-                        <p class="text-2xl font-bold text-blue-400">${new Intl.NumberFormat().format(car.price || 0)} ${car.currency || 'AED'}</p>
-                    </div>
-                    <button id="car-info-close-btn-modal" class="text-gray-400 hover:text-white text-2xl">&times;</button>
-                </div>
-                <div class="mb-6">
-                    <img src="${car.image || 'https://via.placeholder.com/800x400?text=No+Image'}" 
-                         alt="${car.make} ${car.model}" 
-                         class="rounded-lg shadow-md w-full max-h-96 object-cover"
-                         onerror="this.src='https://via.placeholder.com/800x400?text=Image+Not+Available'">
-                </div>
-                <h3 class="text-xl font-semibold text-gray-300 mb-4 border-b border-gray-600 pb-2">Specifications</h3>
-                <div class="grid grid-cols-2 gap-4 text-gray-400 mb-6">
-                    <div><strong class="text-gray-300">Body Style:</strong> ${specs.bodyStyle || 'N/A'}</div>
-                    <div><strong class="text-gray-300">Engine:</strong> ${specs.engine || 'N/A'}</div>
-                    <div><strong class="text-gray-300">Horsepower:</strong> ${specs.horsepower || 0} hp</div>
-                    <div><strong class="text-gray-300">Fuel Economy:</strong> ${specs.fuelEconomy || 'N/A'}</div>
-                    ${Object.entries(specs).filter(([k]) => !['bodyStyle', 'engine', 'horsepower', 'fuelEconomy'].includes(k)).map(([key, value]) => 
-                        `<div><strong class="text-gray-300">${key}:</strong> ${value}</div>`
-                    ).join('')}
-                </div>
-                ${enginesHtml}
-                ${statsHtml}
-                ${car.rating ? `
-                    <div class="mt-6 flex items-center gap-2">
-                        ${createStarRating(car.rating)}
-                        <span class="text-yellow-400 font-bold text-xl">${car.rating.toFixed(1)}</span>
-                        <span class="text-gray-400">(${car.reviews || 0} reviews)</span>
-                    </div>
-                ` : ''}
-            </div>
-        </div>`;
-    DOM.carInfoModal.innerHTML = content;
-    DOM.carInfoContent.innerHTML = content;
-    
-    // Add event listener to the close button
-    const closeBtn = document.getElementById('car-info-close-btn-modal');
-    if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-            DOM.carInfoModal.classList.add('hidden');
-        });
+    if (!DOM.carInfoModal || !DOM.carInfoContent) {
+        console.error('Modal elements not found');
+        return;
     }
+    
+    const content = `
+        <div class="flex justify-between items-start mb-4">
+            <div>
+                <h2 class="text-3xl font-bold text-white mb-2">${car.make} ${car.model} ${car.year ? `(${car.year})` : ''}</h2>
+                <p class="text-2xl font-bold text-blue-400">${new Intl.NumberFormat().format(car.price || 0)} ${car.currency || 'AED'}</p>
+            </div>
+        </div>
+        <div class="mb-6">
+            <img src="${car.image || 'https://via.placeholder.com/800x400?text=No+Image'}" 
+                 alt="${car.make} ${car.model}" 
+                 class="rounded-lg shadow-md w-full max-h-96 object-cover"
+                 onerror="this.src='https://via.placeholder.com/800x400?text=Image+Not+Available'">
+        </div>
+        <h3 class="text-xl font-semibold text-gray-300 mb-4 border-b border-gray-600 pb-2">Specifications</h3>
+        <div class="grid grid-cols-2 gap-4 text-gray-400 mb-6">
+            <div><strong class="text-gray-300">Body Style:</strong> ${specs.bodyStyle || 'N/A'}</div>
+            <div><strong class="text-gray-300">Engine:</strong> ${specs.engine || 'N/A'}</div>
+            <div><strong class="text-gray-300">Horsepower:</strong> ${specs.horsepower || 0} hp</div>
+            <div><strong class="text-gray-300">Fuel Economy:</strong> ${specs.fuelEconomy || 'N/A'}</div>
+            ${Object.entries(specs).filter(([k]) => !['bodyStyle', 'engine', 'horsepower', 'fuelEconomy'].includes(k)).map(([key, value]) => 
+                `<div><strong class="text-gray-300">${key}:</strong> ${value}</div>`
+            ).join('')}
+        </div>
+        ${enginesHtml}
+        ${statsHtml}
+        ${car.rating ? `
+            <div class="mt-6 flex items-center gap-2">
+                ${createStarRating(car.rating)}
+                <span class="text-yellow-400 font-bold text-xl">${car.rating.toFixed(1)}</span>
+                <span class="text-gray-400">(${car.reviews || 0} reviews)</span>
+            </div>
+        ` : ''}`;
+    
+    DOM.carInfoContent.innerHTML = content;
     DOM.carInfoModal.classList.remove('hidden');
 }
 
@@ -358,7 +386,10 @@ export function createParticles() {
  * @param {Array<number>} carIds - Optional array of car IDs to display as recommendations.
  */
 export async function appendMessage(message, sender, carIds = [], messageId = null) {
-    if (!DOM.chatbotLog) return;
+    if (!DOM.chatbotLog) {
+        console.warn('Chatbot log container not found');
+        return;
+    }
     
     const messageEl = document.createElement('div');
     const avatarName = sender === 'user' ? 'You' : 'AI';

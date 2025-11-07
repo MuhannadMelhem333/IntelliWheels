@@ -51,9 +51,9 @@ export function setUserData(user) {
 }
 
 /**
- * Generic API request handler with authentication
+ * Generic API request handler with authentication and cancellation support
  */
-async function apiRequest(endpoint, options = {}) {
+async function apiRequest(endpoint, options = {}, signal = null) {
     try {
         const url = `${API_BASE_URL}${endpoint}`;
         const token = getAuthToken();
@@ -72,12 +72,13 @@ async function apiRequest(endpoint, options = {}) {
             headers['Authorization'] = `Bearer ${token}`;
         }
         
-        console.log('API Request:', url, options.method || 'GET');
-        
-        const response = await fetch(url, {
+        const fetchOptions = {
+            ...options,
             headers,
-            ...options
-        });
+            signal // Add abort signal for cancellation
+        };
+        
+        const response = await fetch(url, fetchOptions);
         
         if (!response.ok) {
             const errorText = await response.text();
@@ -108,6 +109,13 @@ async function apiRequest(endpoint, options = {}) {
         const data = await response.json();
         return data;
     } catch (error) {
+        // Handle abort errors gracefully
+        if (error.name === 'AbortError') {
+            return {
+                success: false,
+                error: 'Request cancelled'
+            };
+        }
         console.error('API Error:', error);
         // Return error response instead of throwing
         return {
@@ -120,7 +128,7 @@ async function apiRequest(endpoint, options = {}) {
 /**
  * Get all cars with optional filters
  */
-export async function getCars(filters = {}) {
+export async function getCars(filters = {}, signal = null) {
     const params = new URLSearchParams();
     
     if (filters.make) params.append('make', filters.make);
@@ -132,7 +140,7 @@ export async function getCars(filters = {}) {
     const queryString = params.toString();
     const endpoint = `/cars${queryString ? `?${queryString}` : ''}`;
     
-    return await apiRequest(endpoint);
+    return await apiRequest(endpoint, {}, signal);
 }
 
 /**
