@@ -58,10 +58,20 @@ def init_db():
             source_sheets TEXT,
             latitude REAL,
             longitude REAL,
+            user_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
+    
+    # Add user_id column if it doesn't exist (migration)
+    cursor.execute("PRAGMA table_info(cars)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'user_id' not in columns:
+        cursor.execute('ALTER TABLE cars ADD COLUMN user_id INTEGER')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cars_user_id ON cars(user_id)')
+        print("✅ Added user_id column to cars table")
     
     # Statistics table
     cursor.execute('''
@@ -657,11 +667,14 @@ def create_car():
             if field not in data:
                 return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
         
+        # Get user_id from authenticated user
+        user_id = request.current_user['user_id']
+        
         # Insert car
         cursor.execute('''
             INSERT INTO cars (make, model, year, price, currency, image_url, image_urls, 
-                           rating, reviews, specs, engines, statistics, source_sheets)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           rating, reviews, specs, engines, statistics, source_sheets, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data.get('make'),
             data.get('model'),
@@ -675,7 +688,8 @@ def create_car():
             json.dumps(data.get('specs', {})),
             json.dumps(data.get('engines', [])),
             json.dumps(data.get('statistics', {})),
-            json.dumps(['Manual Entry'])
+            json.dumps(['Manual Entry']),
+            user_id
         ))
         
         car_id = cursor.lastrowid
@@ -705,12 +719,19 @@ def update_car(car_id):
         
         conn = get_db()
         cursor = conn.cursor()
+        user_id = request.current_user['user_id']
         
-        # Check if car exists
-        cursor.execute("SELECT id FROM cars WHERE id = ?", (car_id,))
-        if not cursor.fetchone():
+        # Check if car exists and belongs to user
+        cursor.execute("SELECT id, user_id FROM cars WHERE id = ?", (car_id,))
+        car = cursor.fetchone()
+        if not car:
             conn.close()
             return jsonify({'success': False, 'error': 'Car not found'}), 404
+        
+        # Check ownership (allow if user_id is None for backward compatibility or if it matches)
+        if car[1] is not None and car[1] != user_id:
+            conn.close()
+            return jsonify({'success': False, 'error': 'You do not have permission to edit this listing'}), 403
         
         # Build update query dynamically
         updates = []
@@ -755,12 +776,19 @@ def delete_car(car_id):
     try:
         conn = get_db()
         cursor = conn.cursor()
+        user_id = request.current_user['user_id']
         
-        # Check if car exists
-        cursor.execute("SELECT id FROM cars WHERE id = ?", (car_id,))
-        if not cursor.fetchone():
+        # Check if car exists and belongs to user
+        cursor.execute("SELECT id, user_id FROM cars WHERE id = ?", (car_id,))
+        car = cursor.fetchone()
+        if not car:
             conn.close()
             return jsonify({'success': False, 'error': 'Car not found'}), 404
+        
+        # Check ownership (allow if user_id is None for backward compatibility or if it matches)
+        if car[1] is not None and car[1] != user_id:
+            conn.close()
+            return jsonify({'success': False, 'error': 'You do not have permission to delete this listing'}), 403
         
         # Delete related data
         cursor.execute("DELETE FROM favorites WHERE car_id = ?", (car_id,))
@@ -786,6 +814,33 @@ def get_makes():
         makes = [row[0] for row in cursor.fetchall()]
         conn.close()
         return jsonify({'success': True, 'makes': makes})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/my-listings', methods=['GET'])
+@require_auth
+def get_my_listings():
+    """Get all listings created by the current user"""
+    try:
+        user_id = request.current_user['user_id']
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM cars 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        
+        rows = cursor.fetchall()
+        cars = [car_row_to_dict(row) for row in rows]
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'cars': cars,
+            'total': len(cars)
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

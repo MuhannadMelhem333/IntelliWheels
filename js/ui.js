@@ -9,6 +9,7 @@ function initializeDOM() {
             listings: document.getElementById('nav-listings'),
             reviews: document.getElementById('nav-reviews'),
             favorites: document.getElementById('nav-favorites'),
+            myListings: document.getElementById('nav-my-listings'),
             chatbot: document.getElementById('nav-chatbot'),
             listingAssistant: document.getElementById('nav-listing-assistant'),
             analytics: document.getElementById('nav-analytics'),
@@ -21,6 +22,7 @@ function initializeDOM() {
             listings: document.getElementById('page-listings'),
             reviews: document.getElementById('page-reviews'),
             favorites: document.getElementById('page-favorites'),
+            myListings: document.getElementById('page-my-listings'),
             chatbot: document.getElementById('page-chatbot'),
             listingAssistant: document.getElementById('page-listing-assistant'),
             analytics: document.getElementById('page-analytics'),
@@ -45,6 +47,7 @@ function initializeDOM() {
         listingsContainer: document.getElementById('listings-container'),
         reviewsContainer: document.getElementById('reviews-container'),
         favoritesContainer: document.getElementById('favorites-container'),
+        myListingsContainer: document.getElementById('my-listings-container'),
         // "Add Listing" Form
         addListingForm: document.getElementById('add-listing-form'),
         // Chatbot UI
@@ -64,6 +67,10 @@ function initializeDOM() {
         carInfoModal: document.getElementById('car-info-modal'),
         carInfoContent: document.getElementById('car-info-content'),
         carInfoCloseBtn: document.getElementById('car-info-close-btn'),
+        // Edit Listing Modal
+        editListingModal: document.getElementById('edit-listing-modal'),
+        editListingForm: document.getElementById('edit-listing-form'),
+        editListingCancelBtn: document.getElementById('edit-listing-cancel-btn'),
     };
 }
 
@@ -117,6 +124,7 @@ export function showPage(pageId) {
         'listings': DOM.navButtons.listings,
         'reviews': DOM.navButtons.reviews,
         'favorites': DOM.navButtons.favorites,
+        'myListings': DOM.navButtons.myListings,
         'chatbot': DOM.navButtons.chatbot,
         'listingAssistant': DOM.navButtons.listingAssistant,
         'analytics': DOM.navButtons.analytics,
@@ -175,12 +183,23 @@ function createStarRating(rating) {
  * @param {Array<string>} favorites - Array of favorited car IDs.
  * @returns {HTMLDivElement}
  */
-function createCarListItem(car, favorites = []) {
+function createCarListItem(car, favorites = [], showEditDelete = false) {
     const card = document.createElement('div');
     card.className = 'car-list-item';
     const isFavorited = favorites.includes(car.id);
     const specs = car.specs || {};
     const imageUrl = car.image || 'https://via.placeholder.com/400x300?text=No+Image';
+
+    const editDeleteButtons = showEditDelete ? `
+        <div class="mt-4 flex justify-end gap-2">
+            <button class="edit-button bg-yellow-600 text-white py-2 px-5 rounded-lg hover:bg-yellow-700 transition-colors" data-car-id="${car.id}">Edit</button>
+            <button class="delete-button bg-red-600 text-white py-2 px-5 rounded-lg hover:bg-red-700 transition-colors" data-car-id="${car.id}">Delete</button>
+        </div>
+    ` : `
+        <div class="mt-4 flex justify-end gap-2">
+            <button class="details-button bg-blue-600 text-white py-2 px-5 rounded-lg hover:bg-blue-700 transition-colors" data-car-id="${car.id}">View Details</button>
+        </div>
+    `;
 
     card.innerHTML = `
         <img src="${imageUrl}" 
@@ -196,11 +215,13 @@ function createCarListItem(car, favorites = []) {
                         <h3 class="text-2xl font-semibold text-white">${car.make} ${car.model}</h3>
                         <p class="text-gray-400">${car.year || 'N/A'} ${specs.bodyStyle ? `&bull; ${specs.bodyStyle}` : ''}</p>
                     </div>
+                    ${!showEditDelete ? `
                     <button class="favorite-btn ${isFavorited ? 'favorited' : ''}" data-car-id="${car.id}" aria-label="Favorite">
                         <svg class="w-7 h-7" fill="currentColor" viewBox="0 0 20 20">
                             <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"></path>
                         </svg>
                     </button>
+                    ` : ''}
                 </div>
                 ${car.rating ? `
                     <div class="flex items-center gap-2 mt-2">
@@ -211,9 +232,7 @@ function createCarListItem(car, favorites = []) {
                 ` : ''}
                 <p class="text-3xl font-bold text-blue-400 mt-4">${new Intl.NumberFormat().format(car.price || 0)} ${car.currency || 'AED'}</p>
             </div>
-            <div class="mt-4 flex justify-end gap-2">
-                <button class="details-button bg-blue-600 text-white py-2 px-5 rounded-lg hover:bg-blue-700 transition-colors" data-car-id="${car.id}">View Details</button>
-            </div>
+            ${editDeleteButtons}
         </div>`;
     return card;
 }
@@ -224,8 +243,9 @@ function createCarListItem(car, favorites = []) {
  * @param {Array<Object>} carList - The cars to render.
  * @param {HTMLElement} container - The container element.
  * @param {Array<string>} favorites - Array of favorited car IDs.
+ * @param {boolean} showEditDelete - Whether to show edit/delete buttons instead of view details.
  */
-export function renderCarList(carList, container, favorites = []) {
+export function renderCarList(carList, container, favorites = [], showEditDelete = false) {
     if (!container) {
         console.error('Container not found for rendering');
         return;
@@ -249,7 +269,7 @@ export function renderCarList(carList, container, favorites = []) {
     const cards = [];
     carList.forEach((car, index) => {
         try {
-            const card = createCarListItem(car, favorites);
+            const card = createCarListItem(car, favorites, showEditDelete);
             if (card) {
                 card.style.opacity = '0';
                 card.style.transform = 'translateY(20px)';

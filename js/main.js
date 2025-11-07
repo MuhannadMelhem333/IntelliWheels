@@ -31,7 +31,8 @@ import {
     getMakes, 
     getFavorites, 
     addFavorite, 
-    removeFavorite, 
+    removeFavorite,
+    getMyListings,
     handleChatbotQuery,
     handleListingAssistantQuery,
     healthCheck,
@@ -634,6 +635,12 @@ async function handleAddListing(event) {
             await fetchCarData();
             await loadMakes();
             applyFiltersAndRender();
+            
+            // Refresh my listings if it exists
+            if (DOM.myListingsContainer) {
+                await renderMyListingsPage();
+            }
+            
             showPage('listings');
         } else {
             throw new Error(response.error || 'Failed to add car');
@@ -665,14 +672,21 @@ async function handleEditCar(carId, updates) {
 }
 
 async function handleDeleteCar(carId) {
-    if (!confirm('Are you sure you want to delete this car listing?')) {
+    if (!confirm('Are you sure you want to delete this car listing? This action cannot be undone.')) {
         return;
     }
     
     try {
         const response = await deleteCar(carId);
         if (response.success) {
-            showSuccess('Car deleted successfully!');
+            showSuccess('Car listing deleted successfully!');
+            
+            // Refresh my listings page if currently viewing
+            if (DOM.pages.myListings && !DOM.pages.myListings.classList.contains('hidden')) {
+                await renderMyListingsPage();
+            }
+            
+            // Also refresh main listings
             await fetchCarData();
             applyFiltersAndRender();
         } else {
@@ -1042,6 +1056,11 @@ window.handleCreateListingFromAssistant = async function(listingData) {
             await fetchCarData();
             await loadMakes();
             applyFiltersAndRender();
+            
+            // Refresh my listings if it exists
+            if (DOM.myListingsContainer) {
+                await renderMyListingsPage();
+            }
         } else {
             throw new Error(response.error || 'Failed to create listing');
         }
@@ -1290,6 +1309,126 @@ async function renderReviewsPage() {
     }
 }
 
+// --- MY LISTINGS PAGE ---
+async function renderMyListingsPage() {
+    try {
+        showLoadingState(DOM.myListingsContainer);
+        const response = await getMyListings();
+        
+        if (response.success) {
+            const myCars = response.cars || [];
+            if (myCars.length === 0) {
+                DOM.myListingsContainer.innerHTML = `
+                    <div class="text-center py-12">
+                        <div class="text-6xl mb-4">🚗</div>
+                        <h3 class="text-xl font-bold text-white mb-2">No Listings Yet</h3>
+                        <p class="text-gray-400 mb-6">You haven't created any listings yet. Start by adding your first car!</p>
+                        <button id="go-to-add-listing" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                            Add Your First Listing
+                        </button>
+                    </div>
+                `;
+                const btn = document.getElementById('go-to-add-listing');
+                if (btn) {
+                    btn.addEventListener('click', () => showPage('addListing'));
+                }
+            } else {
+                renderCarList(myCars, DOM.myListingsContainer, [], true); // true = show edit/delete buttons
+            }
+        } else {
+            throw new Error(response.error || 'Failed to fetch my listings');
+        }
+    } catch (error) {
+        console.error("Could not fetch my listings:", error);
+        showError(DOM.myListingsContainer, "Could not load your listings.");
+    } finally {
+        hideLoadingState();
+    }
+}
+
+// --- EDIT LISTING ---
+function showEditListingModal(car) {
+    if (!DOM.editListingModal || !DOM.editListingForm) return;
+    
+    // Populate form with car data
+    document.getElementById('edit-car-id').value = car.id;
+    document.getElementById('edit-make').value = car.make || '';
+    document.getElementById('edit-model').value = car.model || '';
+    document.getElementById('edit-year').value = car.year || '';
+    document.getElementById('edit-price').value = car.price || '';
+    document.getElementById('edit-currency').value = car.currency || 'AED';
+    document.getElementById('edit-rating').value = car.rating || 0;
+    document.getElementById('edit-image').value = car.image || '';
+    
+    const specs = car.specs || {};
+    document.getElementById('edit-bodyStyle').value = specs.bodyStyle || '';
+    document.getElementById('edit-horsepower').value = specs.horsepower || '';
+    document.getElementById('edit-engine').value = specs.engine || '';
+    document.getElementById('edit-fuelEconomy').value = specs.fuelEconomy || '';
+    
+    DOM.editListingModal.classList.remove('hidden');
+}
+
+function hideEditListingModal() {
+    if (DOM.editListingModal) {
+        DOM.editListingModal.classList.add('hidden');
+        if (DOM.editListingForm) {
+            DOM.editListingForm.reset();
+        }
+    }
+}
+
+async function handleEditListing(event) {
+    event.preventDefault();
+    
+    if (isLoading) return;
+    isLoading = true;
+    
+    try {
+        const carId = parseInt(document.getElementById('edit-car-id').value);
+        const imageUrl = document.getElementById('edit-image').value;
+        const updates = {
+            make: document.getElementById('edit-make').value,
+            model: document.getElementById('edit-model').value,
+            year: document.getElementById('edit-year').value ? parseInt(document.getElementById('edit-year').value) : null,
+            price: document.getElementById('edit-price').value ? parseFloat(document.getElementById('edit-price').value) : null,
+            currency: document.getElementById('edit-currency').value || 'AED',
+            image_url: imageUrl,
+            image: imageUrl, // Also include 'image' field for compatibility
+            rating: document.getElementById('edit-rating').value ? parseFloat(document.getElementById('edit-rating').value) : null,
+            specs: {
+                bodyStyle: document.getElementById('edit-bodyStyle').value || 'Unknown',
+                horsepower: document.getElementById('edit-horsepower').value ? parseInt(document.getElementById('edit-horsepower').value) : 0,
+                engine: document.getElementById('edit-engine').value || 'N/A',
+                fuelEconomy: document.getElementById('edit-fuelEconomy').value || 'N/A'
+            }
+        };
+        
+        const response = await updateCar(carId, updates);
+        
+        if (response.success) {
+            showSuccess('Listing updated successfully!');
+            hideEditListingModal();
+            
+            // Refresh my listings page
+            await renderMyListingsPage();
+            
+            // Also refresh main listings if currently viewing
+            if (DOM.pages.listings && !DOM.pages.listings.classList.contains('hidden')) {
+                await fetchCarData();
+                applyFiltersAndRender();
+            }
+        } else {
+            throw new Error(response.error || 'Failed to update listing');
+        }
+    } catch (error) {
+        console.error("Edit listing error:", error);
+        showError(null, `Could not update listing: ${error.message}`);
+    } finally {
+        isLoading = false;
+    }
+}
+
 // --- EVENT LISTENERS ---
 function setupEventListeners() {
     console.log('Setting up event listeners...');
@@ -1355,6 +1494,14 @@ function setupEventListeners() {
             if (!requireAuth()) return;
             showPage('favorites');
             await renderFavoritesPage();
+        });
+    }
+    
+    if (DOM.navButtons.myListings) {
+        DOM.navButtons.myListings.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('myListings');
+            await renderMyListingsPage();
         });
     }
     
@@ -1449,10 +1596,16 @@ function setupEventListeners() {
             event.preventDefault();
             event.stopPropagation();
             const carId = parseInt(editBtn.dataset.carId);
-            const car = allCars.find(c => c.id === carId);
-            if (car) {
-                // TODO: Implement edit modal
-                alert('Edit functionality coming soon!');
+            try {
+                const response = await getCar(carId);
+                if (response.success && response.car) {
+                    showEditListingModal(response.car);
+                } else {
+                    showError(null, 'Could not load car details for editing');
+                }
+            } catch (error) {
+                console.error('Error loading car for editing:', error);
+                showError(null, 'Could not load car details for editing');
             }
             return;
         }
@@ -1540,6 +1693,19 @@ function setupEventListeners() {
     if (DOM.carInfoModal) {
         DOM.carInfoModal.addEventListener('click', (event) => {
             if (event.target === DOM.carInfoModal) DOM.carInfoModal.classList.add('hidden');
+        });
+    }
+    
+    // Edit Listing Modal
+    if (DOM.editListingForm) {
+        DOM.editListingForm.addEventListener('submit', handleEditListing);
+    }
+    if (DOM.editListingCancelBtn) {
+        DOM.editListingCancelBtn.addEventListener('click', hideEditListingModal);
+    }
+    if (DOM.editListingModal) {
+        DOM.editListingModal.addEventListener('click', (event) => {
+            if (event.target === DOM.editListingModal) hideEditListingModal();
         });
     }
 }

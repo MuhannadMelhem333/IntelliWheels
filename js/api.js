@@ -368,6 +368,13 @@ export async function verifyAuth() {
 }
 
 /**
+ * Get user's own listings
+ */
+export async function getMyListings() {
+    return await apiRequest('/my-listings');
+}
+
+/**
  * Send a message to the AI Listing Assistant
  * @param {string} query - The user's message
  * @param {string} apiKey - The Gemini API key
