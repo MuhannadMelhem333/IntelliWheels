@@ -21,8 +21,29 @@ except ImportError:
     REQUESTS_AVAILABLE = False
     print("⚠️ Warning: requests not installed. Install with: pip install requests")
 
+try:
+    from flask_swagger_ui import get_swaggerui_blueprint
+    SWAGGER_AVAILABLE = True
+except ImportError:
+    SWAGGER_AVAILABLE = False
+    print("⚠️ Warning: flask-swagger-ui not installed. Install with: pip install flask-swagger-ui")
+
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
+
+# Swagger UI configuration
+if SWAGGER_AVAILABLE:
+    SWAGGER_URL = '/api-docs'  # URL for exposing Swagger UI (without trailing '/')
+    API_URL = '/api/swagger.json'  # Our API url (can of course be a local resource)
+    
+    swaggerui_blueprint = get_swaggerui_blueprint(
+        SWAGGER_URL,
+        API_URL,
+        config={
+            'app_name': "IntelliWheels API"
+        }
+    )
+    app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 
 # Database configuration
 DB_PATH = 'intelliwheels.db'
@@ -2073,10 +2094,489 @@ def health():
         'timestamp': datetime.now().isoformat()
     })
 
+@app.route('/api/swagger.json')
+def swagger():
+    """Swagger/OpenAPI specification"""
+    swagger_spec = {
+        "openapi": "3.0.0",
+        "info": {
+            "title": "IntelliWheels API",
+            "description": "Modern REST API for car catalog management with AI chatbot integration",
+            "version": "1.0.0",
+            "contact": {
+                "name": "IntelliWheels API Support"
+            }
+        },
+        "servers": [
+            {
+                "url": "http://localhost:5000",
+                "description": "Development server"
+            }
+        ],
+        "components": {
+            "securitySchemes": {
+                "BearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "JWT",
+                    "description": "Enter your authentication token"
+                }
+            }
+        },
+        "security": [
+            {
+                "BearerAuth": []
+            }
+        ],
+        "paths": {
+            "/api/health": {
+                "get": {
+                    "tags": ["Health"],
+                    "summary": "Health check endpoint",
+                    "description": "Check if the API is running",
+                    "responses": {
+                        "200": {
+                            "description": "API is healthy",
+                            "content": {
+                                "application/json": {
+                                    "example": {
+                                        "success": True,
+                                        "status": "healthy",
+                                        "timestamp": "2024-01-01T00:00:00"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "/api/auth/signup": {
+                "post": {
+                    "tags": ["Authentication"],
+                    "summary": "User registration",
+                    "description": "Create a new user account",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["username", "email", "password"],
+                                    "properties": {
+                                        "username": {
+                                            "type": "string",
+                                            "example": "johndoe"
+                                        },
+                                        "email": {
+                                            "type": "string",
+                                            "format": "email",
+                                            "example": "john@example.com"
+                                        },
+                                        "password": {
+                                            "type": "string",
+                                            "format": "password",
+                                            "example": "password123"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "User created successfully"
+                        },
+                        "400": {
+                            "description": "Invalid input or user already exists"
+                        }
+                    },
+                    "security": []
+                }
+            },
+            "/api/auth/login": {
+                "post": {
+                    "tags": ["Authentication"],
+                    "summary": "User login",
+                    "description": "Authenticate user and get access token",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["email", "password"],
+                                    "properties": {
+                                        "email": {
+                                            "type": "string",
+                                            "format": "email",
+                                            "example": "john@example.com"
+                                        },
+                                        "password": {
+                                            "type": "string",
+                                            "format": "password",
+                                            "example": "password123"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Login successful"
+                        },
+                        "401": {
+                            "description": "Invalid credentials"
+                        }
+                    },
+                    "security": []
+                }
+            },
+            "/api/auth/verify": {
+                "get": {
+                    "tags": ["Authentication"],
+                    "summary": "Verify session",
+                    "description": "Verify if user session is valid",
+                    "responses": {
+                        "200": {
+                            "description": "Session verification result"
+                        }
+                    }
+                }
+            },
+            "/api/cars": {
+                "get": {
+                    "tags": ["Cars"],
+                    "summary": "Get all cars",
+                    "description": "Retrieve a list of all cars with optional filtering",
+                    "parameters": [
+                        {
+                            "name": "make",
+                            "in": "query",
+                            "schema": {"type": "string"},
+                            "description": "Filter by car make"
+                        },
+                        {
+                            "name": "sort",
+                            "in": "query",
+                            "schema": {"type": "string"},
+                            "description": "Sort order (price-asc, price-desc, rating-desc)"
+                        },
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "schema": {"type": "integer"},
+                            "description": "Limit number of results"
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "List of cars"
+                        }
+                    }
+                },
+                "post": {
+                    "tags": ["Cars"],
+                    "summary": "Create a new car listing",
+                    "description": "Add a new car to the catalog",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["make", "model"],
+                                    "properties": {
+                                        "make": {"type": "string", "example": "Toyota"},
+                                        "model": {"type": "string", "example": "Camry"},
+                                        "year": {"type": "integer", "example": 2023},
+                                        "price": {"type": "number", "example": 50000},
+                                        "currency": {"type": "string", "example": "AED"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Car created successfully"
+                        }
+                    }
+                }
+            },
+            "/api/cars/{car_id}": {
+                "get": {
+                    "tags": ["Cars"],
+                    "summary": "Get car by ID",
+                    "parameters": [
+                        {
+                            "name": "car_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"}
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Car details"
+                        },
+                        "404": {
+                            "description": "Car not found"
+                        }
+                    }
+                },
+                "patch": {
+                    "tags": ["Cars"],
+                    "summary": "Update car listing",
+                    "parameters": [
+                        {
+                            "name": "car_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"}
+                        }
+                    ],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "make": {"type": "string"},
+                                        "model": {"type": "string"},
+                                        "price": {"type": "number"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Car updated successfully"
+                        }
+                    }
+                },
+                "delete": {
+                    "tags": ["Cars"],
+                    "summary": "Delete car listing",
+                    "parameters": [
+                        {
+                            "name": "car_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"}
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Car deleted successfully"
+                        }
+                    }
+                }
+            },
+            "/api/my-listings": {
+                "get": {
+                    "tags": ["Cars"],
+                    "summary": "Get user's own listings",
+                    "description": "Retrieve all car listings created by the current user",
+                    "responses": {
+                        "200": {
+                            "description": "List of user's cars"
+                        }
+                    }
+                }
+            },
+            "/api/favorites": {
+                "get": {
+                    "tags": ["Favorites"],
+                    "summary": "Get user's favorite cars",
+                    "responses": {
+                        "200": {
+                            "description": "List of favorite cars"
+                        }
+                    }
+                },
+                "post": {
+                    "tags": ["Favorites"],
+                    "summary": "Add car to favorites",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["car_id"],
+                                    "properties": {
+                                        "car_id": {"type": "integer", "example": 1}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Car added to favorites"
+                        }
+                    }
+                }
+            },
+            "/api/favorites/{car_id}": {
+                "delete": {
+                    "tags": ["Favorites"],
+                    "summary": "Remove car from favorites",
+                    "parameters": [
+                        {
+                            "name": "car_id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "integer"}
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Car removed from favorites"
+                        }
+                    }
+                }
+            },
+            "/api/profile": {
+                "get": {
+                    "tags": ["Profile"],
+                    "summary": "Get user profile",
+                    "description": "Retrieve current user's profile information",
+                    "responses": {
+                        "200": {
+                            "description": "User profile data"
+                        }
+                    }
+                },
+                "patch": {
+                    "tags": ["Profile"],
+                    "summary": "Update user profile",
+                    "description": "Update username, email, or password",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "username": {"type": "string"},
+                                        "email": {"type": "string"},
+                                        "password": {"type": "string"},
+                                        "current_password": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Profile updated successfully"
+                        }
+                    }
+                }
+            },
+            "/api/chatbot": {
+                "post": {
+                    "tags": ["Chatbot"],
+                    "summary": "Chat with AI assistant",
+                    "description": "Send a message to the AI chatbot",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["query"],
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "example": "What cars do you have?"
+                                        },
+                                        "session_id": {
+                                            "type": "string",
+                                            "example": "session_123"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Chatbot response"
+                        }
+                    }
+                }
+            },
+            "/api/listing-assistant": {
+                "post": {
+                    "tags": ["AI Assistant"],
+                    "summary": "AI Listing Assistant",
+                    "description": "Get help creating or editing car listings with AI",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["query"],
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "example": "I want to add a 2023 Toyota Camry for $50,000"
+                                        },
+                                        "session_id": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "AI assistant response"
+                        }
+                    }
+                }
+            },
+            "/api/analytics/insights": {
+                "get": {
+                    "tags": ["Analytics"],
+                    "summary": "Get AI-powered analytics",
+                    "description": "Get personalized analytics and insights about car listings",
+                    "parameters": [
+                        {
+                            "name": "filter",
+                            "in": "query",
+                            "description": "Filter type: all, my (user's listings), or favorites",
+                            "schema": {
+                                "type": "string",
+                                "enum": ["all", "my", "favorites"],
+                                "default": "all"
+                            }
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Analytics insights"
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return jsonify(swagger_spec)
+
 if __name__ == '__main__':
     init_db()
     print("🚀 IntelliWheels API Server Starting...")
     print("📊 Database initialized")
     print("🌐 API available at http://localhost:5000")
+    if SWAGGER_AVAILABLE:
+        print("📚 Swagger UI available at http://localhost:5000/api-docs")
     app.run(debug=True, host='0.0.0.0', port=5000)
 
