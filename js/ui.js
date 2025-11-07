@@ -53,20 +53,54 @@ export const DOM = {
 
 /**
  * Shows a specific page and hides others, updates nav button state.
+ * Enhanced with smooth animations and transitions.
  * @param {string} pageId - The ID of the page to show.
  */
 export function showPage(pageId) {
+    // Hide all pages with fade out animation
     Object.values(DOM.pages).forEach(page => {
-        if (page) page.classList.add('hidden');
+        if (page && !page.classList.contains('hidden')) {
+            page.style.opacity = '0';
+            page.style.transform = 'translateY(20px)';
+            setTimeout(() => {
+                page.classList.add('hidden');
+            }, 200);
+        } else if (page) {
+            page.classList.add('hidden');
+        }
     });
+    
+    // Show target page with fade in animation
     if (DOM.pages[pageId]) {
         DOM.pages[pageId].classList.remove('hidden');
+        // Trigger reflow for animation
+        DOM.pages[pageId].offsetHeight;
+        DOM.pages[pageId].style.opacity = '0';
+        DOM.pages[pageId].style.transform = 'translateY(20px)';
+        DOM.pages[pageId].style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+        
+        setTimeout(() => {
+            DOM.pages[pageId].style.opacity = '1';
+            DOM.pages[pageId].style.transform = 'translateY(0)';
+        }, 50);
     }
+    
+    // Update nav buttons with smooth transitions
     Object.values(DOM.navButtons).forEach(btn => {
-        if (btn) btn.classList.remove('active');
+        if (btn) {
+            btn.classList.remove('active');
+            btn.style.transform = 'scale(1)';
+        }
     });
+    
     if (DOM.navButtons[pageId]) {
-        DOM.navButtons[pageId].classList.add('active');
+        setTimeout(() => {
+            DOM.navButtons[pageId].classList.add('active');
+            DOM.navButtons[pageId].style.transform = 'scale(1.05)';
+            setTimeout(() => {
+                DOM.navButtons[pageId].style.transform = 'scale(1)';
+            }, 200);
+        }, 100);
     }
 }
 
@@ -183,7 +217,28 @@ export function renderCarList(carList, container, favorites = []) {
         try {
             const card = createCarListItem(car, favorites);
             if (card) {
+                // Staggered animation delay
+                card.style.opacity = '0';
+                card.style.transform = 'translateY(30px) scale(0.95)';
+                card.style.transition = `opacity 0.5s ease ${index * 0.05}s, transform 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${index * 0.05}s`;
+                
                 container.appendChild(card);
+                
+                // Trigger animation
+                setTimeout(() => {
+                    card.classList.add('is-visible');
+                    card.style.opacity = '1';
+                    card.style.transform = 'translateY(0) scale(1)';
+                }, 50);
+                
+                // Add hover interactions
+                card.addEventListener('mouseenter', () => {
+                    card.style.transform = 'translateY(-8px) scale(1.02)';
+                });
+                
+                card.addEventListener('mouseleave', () => {
+                    card.style.transform = 'translateY(0) scale(1)';
+                });
             }
         } catch (error) {
             console.error(`Error rendering car ${index}:`, error, car);
@@ -492,12 +547,16 @@ function showToast(message, type = 'info') {
     toast.textContent = message;
     document.body.appendChild(toast);
     
+    // Add entrance animation
     setTimeout(() => {
         toast.classList.add('show');
     }, 10);
     
+    // Auto-remove after delay with exit animation
     setTimeout(() => {
         toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
+        toast.style.transition = 'transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease';
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 400);
     }, 3000);
 }
