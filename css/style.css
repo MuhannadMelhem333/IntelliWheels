@@ -1024,6 +1024,56 @@ nav:hover {
     background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), rgba(0, 245, 255, 0.9));
 }
 
+/* --- Chatbot Rating Styles --- */
+.message-rating {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.rating-btn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0.25rem;
+    transition: all 0.2s ease;
+}
+
+.rating-btn:hover {
+    color: #fbbf24;
+    transform: scale(1.2);
+}
+
+.rating-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* --- Analytics Styles --- */
+.analytics-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(30px) saturate(180%);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    box-shadow: var(--glass-shadow);
+}
+
+.analytics-card h2 {
+    color: var(--neon-blue);
+    margin-bottom: 1rem;
+}
+
+.analytics-card h3 {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
 /* --- Custom Scrollbar --- */
 .chatbot-log::-webkit-scrollbar,
 .auth-card::-webkit-scrollbar {

@@ -8,6 +8,7 @@ export const DOM = {
         reviews: document.getElementById('nav-reviews'),
         favorites: document.getElementById('nav-favorites'),
         chatbot: document.getElementById('nav-chatbot'),
+        analytics: document.getElementById('nav-analytics'),
         addListing: document.getElementById('nav-add-listing'),
     },
     // Page Containers
@@ -18,6 +19,7 @@ export const DOM = {
         reviews: document.getElementById('page-reviews'),
         favorites: document.getElementById('page-favorites'),
         chatbot: document.getElementById('page-chatbot'),
+        analytics: document.getElementById('page-analytics'),
         addListing: document.getElementById('page-add-listing'),
     },
     // Auth Elements
@@ -88,6 +90,7 @@ export function showPage(pageId) {
         'reviews': DOM.navButtons.reviews,
         'favorites': DOM.navButtons.favorites,
         'chatbot': DOM.navButtons.chatbot,
+        'analytics': DOM.navButtons.analytics,
         'addListing': DOM.navButtons.addListing
     };
     
@@ -354,10 +357,15 @@ export function createParticles() {
  * @param {string} sender - The sender ('user' or 'bot').
  * @param {Array<number>} carIds - Optional array of car IDs to display as recommendations.
  */
-export async function appendMessage(message, sender, carIds = []) {
+export async function appendMessage(message, sender, carIds = [], messageId = null) {
+    if (!DOM.chatbotLog) return;
+    
     const messageEl = document.createElement('div');
+    const avatarName = sender === 'user' ? 'You' : 'AI';
     messageEl.className = `message-container ${sender}-message`;
-    const avatarName = sender === 'bot' ? 'AI' : 'You';
+    if (messageId) {
+        messageEl.setAttribute('data-message-id', messageId);
+    }
 
     let carRecommendationsHtml = '';
     const carDataMap = new Map();
@@ -412,6 +420,16 @@ export async function appendMessage(message, sender, carIds = []) {
             <p>${message}</p>
             ${carRecommendationsHtml}
         </div>
+        ${sender === 'bot' && messageId ? `
+        <div class="message-rating">
+            <span class="text-xs text-gray-400 mr-2">Rate this response:</span>
+            <button class="rating-btn" data-rating="1" data-message-id="${messageId}" title="Poor">⭐</button>
+            <button class="rating-btn" data-rating="2" data-message-id="${messageId}" title="Fair">⭐</button>
+            <button class="rating-btn" data-rating="3" data-message-id="${messageId}" title="Good">⭐</button>
+            <button class="rating-btn" data-rating="4" data-message-id="${messageId}" title="Very Good">⭐</button>
+            <button class="rating-btn" data-rating="5" data-message-id="${messageId}" title="Excellent">⭐</button>
+        </div>
+        ` : ''}
     `;
     DOM.chatbotLog.appendChild(messageEl);
     DOM.chatbotLog.scrollTop = DOM.chatbotLog.scrollHeight;
@@ -437,6 +455,39 @@ export async function appendMessage(message, sender, carIds = []) {
                     } catch (error) {
                         console.error('Error loading car details:', error);
                     }
+                }
+            });
+        });
+    }
+    
+    // Add rating button handlers for bot messages
+    if (sender === 'bot' && messageId) {
+        const ratingButtons = messageEl.querySelectorAll('.rating-btn');
+        ratingButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const rating = parseInt(btn.dataset.rating);
+                const msgId = btn.dataset.messageId;
+                
+                // Disable all rating buttons
+                ratingButtons.forEach(b => {
+                    b.disabled = true;
+                    b.style.opacity = '0.5';
+                });
+                
+                // Highlight selected rating
+                for (let i = 1; i <= rating; i++) {
+                    const btnToHighlight = messageEl.querySelector(`.rating-btn[data-rating="${i}"]`);
+                    if (btnToHighlight) {
+                        btnToHighlight.style.color = '#fbbf24'; // Yellow
+                    }
+                }
+                
+                // Submit rating
+                try {
+                    const { rateChatbotResponse } = await import('./api.js');
+                    await rateChatbotResponse(msgId, rating);
+                } catch (error) {
+                    console.error('Error rating message:', error);
                 }
             });
         });

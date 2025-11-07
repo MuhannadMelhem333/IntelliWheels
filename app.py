@@ -2,16 +2,17 @@
 IntelliWheels Backend API
 Modern REST API for car catalog management with AI chatbot integration
 """
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import sqlite3
 import json
 import os
-from datetime import datetime
-from functools import wraps
 import re
 import hashlib
 import secrets
+import time
+from datetime import datetime, timedelta
+from functools import wraps
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 
 try:
     import requests
@@ -106,6 +107,30 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    # Chatbot ratings table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chatbot_ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            message_id TEXT,
+            rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+            feedback TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    # Analytics cache table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS analytics_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            analysis_type TEXT NOT NULL,
+            data TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
         )
     ''')
     
@@ -1242,27 +1267,35 @@ Remember: You have access to {len(relevant_cars)} cars in the catalog. Use this 
             
             print(f"📤 Response length: {len(response_text)} characters")
 
-            # Persist conversation to server-side store
-            session_messages = CHAT_SESSIONS.get(session_id, [])
-            session_messages.append({ 'role': 'user', 'text': query })
-            session_messages.append({ 'role': 'bot', 'text': response_text })
-            # Keep last 15 messages
-            if len(session_messages) > 15:
-                session_messages = session_messages[-15:]
-            CHAT_SESSIONS[session_id] = session_messages
-            
             # Extract car IDs mentioned in response for frontend linking
             car_ids_mentioned = []
             for car in relevant_cars:
                 if car['make'].lower() in response_text.lower() and car['model'].lower() in response_text.lower():
                     car_ids_mentioned.append(car['id'])
             
+            # Generate unique message ID for rating
+            message_id = f"msg_{int(time.time())}_{hashlib.md5(response_text.encode()).hexdigest()[:8]}"
+            
+            # Store response in session history
+            CHAT_SESSIONS[session_id] = combined_history + [{
+                'role': 'user',
+                'text': query
+            }, {
+                'role': 'bot',
+                'text': response_text,
+                'message_id': message_id
+            }]
+            
+            # Limit session history size
+            if len(CHAT_SESSIONS[session_id]) > 20:
+                CHAT_SESSIONS[session_id] = CHAT_SESSIONS[session_id][-20:]
+            
             return jsonify({
                 'success': True,
                 'response': response_text,
-                'session': session_id,
                 'intent': intent,
-                'relevant_car_ids': car_ids_mentioned[:5]  # Return up to 5 relevant car IDs
+                'relevant_car_ids': car_ids_mentioned[:5],  # Return up to 5 relevant car IDs
+                'message_id': message_id
             })
             
         except requests.exceptions.Timeout:
@@ -1298,6 +1331,245 @@ Remember: You have access to {len(relevant_cars)} cars in the catalog. Use this 
             'success': False,
             'error': f'Chatbot error: {str(e)}'
         }), 500
+
+@app.route('/api/chatbot/rate', methods=['POST'])
+@require_auth
+def rate_chatbot():
+    """Rate a chatbot response"""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        rating = data.get('rating')
+        feedback = data.get('feedback', '').strip()
+        message_id = data.get('message_id', f"msg_{int(time.time())}")
+        
+        if not rating or rating < 1 or rating > 5:
+            return jsonify({'success': False, 'error': 'Rating must be between 1 and 5'}), 400
+        
+        user_id = request.current_user['user_id']
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO chatbot_ratings (user_id, message_id, rating, feedback)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, message_id, rating, feedback))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Thank you for your feedback!'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/analytics/insights', methods=['GET'])
+@require_auth
+def get_ai_insights():
+    """Get AI-powered data analysis and insights"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get all cars
+        cursor.execute('SELECT * FROM cars')
+        rows = cursor.fetchall()
+        cars = [car_row_to_dict(row) for row in rows]
+        
+        if not cars:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'error': 'No car data available for analysis'
+            }), 404
+        
+        # Calculate statistics
+        total_cars = len(cars)
+        total_makes = len(set(car['make'] for car in cars if car.get('make')))
+        total_models = len(set(f"{car['make']} {car['model']}" for car in cars if car.get('make') and car.get('model')))
+        
+        # Price analysis
+        prices = [car['price'] for car in cars if car.get('price')]
+        avg_price = sum(prices) / len(prices) if prices else 0
+        min_price = min(prices) if prices else 0
+        max_price = max(prices) if prices else 0
+        
+        # Rating analysis
+        ratings = [car['rating'] for car in cars if car.get('rating')]
+        avg_rating = sum(ratings) / len(ratings) if ratings else 0
+        top_rated = sorted(cars, key=lambda x: x.get('rating', 0), reverse=True)[:5]
+        
+        # Make distribution
+        make_counts = {}
+        for car in cars:
+            make = car.get('make', 'Unknown')
+            make_counts[make] = make_counts.get(make, 0) + 1
+        top_makes = sorted(make_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        # Year analysis
+        years = [car['year'] for car in cars if car.get('year')]
+        avg_year = sum(years) / len(years) if years else 0
+        newest_year = max(years) if years else None
+        oldest_year = min(years) if years else None
+        
+        # Price range distribution
+        price_ranges = {
+            'Budget (< 50K)': len([c for c in cars if c.get('price', 0) < 50000]),
+            'Mid-Range (50K-100K)': len([c for c in cars if 50000 <= c.get('price', 0) < 100000]),
+            'Premium (100K-200K)': len([c for c in cars if 100000 <= c.get('price', 0) < 200000]),
+            'Luxury (200K+)': len([c for c in cars if c.get('price', 0) >= 200000])
+        }
+        
+        # Currency distribution
+        currency_counts = {}
+        for car in cars:
+            currency = car.get('currency', 'AED')
+            currency_counts[currency] = currency_counts.get(currency, 0) + 1
+        
+        # Generate AI insights using Gemini
+        api_key = os.getenv('GEMINI_API_KEY')
+        insights_text = ""
+        
+        if api_key and REQUESTS_AVAILABLE:
+            try:
+                insights_prompt = f"""Analyze this car catalog data and provide 5-7 key insights:
+
+Total Cars: {total_cars}
+Total Makes: {total_makes}
+Total Models: {total_models}
+Average Price: {avg_price:.2f}
+Price Range: {min_price:.2f} - {max_price:.2f}
+Average Rating: {avg_rating:.2f}
+Average Year: {avg_year:.0f}
+Year Range: {oldest_year} - {newest_year}
+
+Top Makes: {', '.join([f"{make} ({count})" for make, count in top_makes[:5]])}
+Price Distribution: {price_ranges}
+Currency Distribution: {currency_counts}
+
+Provide concise, actionable insights about market trends, popular segments, pricing patterns, and recommendations. Format as a numbered list."""
+                
+                api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+                headers = {
+                    'Content-Type': 'application/json',
+                    'X-goog-api-key': api_key
+                }
+                
+                payload = {
+                    "contents": [{
+                        "parts": [{"text": insights_prompt}],
+                        "role": "user"
+                    }],
+                    "generationConfig": {
+                        "temperature": 0.7,
+                        "topP": 0.9,
+                        "topK": 40,
+                        "maxOutputTokens": 1024
+                    }
+                }
+                
+                response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+                if response.status_code == 200:
+                    response_data = response.json()
+                    if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                        insights_text = response_data['candidates'][0]['content']['parts'][0]['text']
+            except Exception as e:
+                print(f"AI insights generation failed: {e}")
+                insights_text = "AI insights temporarily unavailable. Please check API key configuration."
+        
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'insights': {
+                'summary': {
+                    'total_cars': total_cars,
+                    'total_makes': total_makes,
+                    'total_models': total_models,
+                    'average_price': round(avg_price, 2),
+                    'min_price': round(min_price, 2),
+                    'max_price': round(max_price, 2),
+                    'average_rating': round(avg_rating, 2),
+                    'average_year': round(avg_year, 0) if avg_year else None,
+                    'year_range': {'oldest': oldest_year, 'newest': newest_year}
+                },
+                'top_makes': [{'make': make, 'count': count} for make, count in top_makes],
+                'top_rated_cars': [{
+                    'id': car['id'],
+                    'make': car.get('make'),
+                    'model': car.get('model'),
+                    'rating': car.get('rating', 0),
+                    'price': car.get('price', 0)
+                } for car in top_rated],
+                'price_distribution': price_ranges,
+                'currency_distribution': currency_counts,
+                'ai_insights': insights_text
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/chatbot/stats', methods=['GET'])
+@require_auth
+def get_chatbot_stats():
+    """Get chatbot statistics and ratings"""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get total ratings
+        cursor.execute('SELECT COUNT(*) FROM chatbot_ratings')
+        total_ratings = cursor.fetchone()[0]
+        
+        # Get average rating
+        cursor.execute('SELECT AVG(rating) FROM chatbot_ratings')
+        avg_rating = cursor.fetchone()[0] or 0
+        
+        # Get rating distribution
+        cursor.execute('''
+            SELECT rating, COUNT(*) as count
+            FROM chatbot_ratings
+            GROUP BY rating
+            ORDER BY rating DESC
+        ''')
+        rating_distribution = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        # Get recent feedback
+        cursor.execute('''
+            SELECT rating, feedback, created_at
+            FROM chatbot_ratings
+            WHERE feedback IS NOT NULL AND feedback != ''
+            ORDER BY created_at DESC
+            LIMIT 10
+        ''')
+        recent_feedback = [
+            {
+                'rating': row[0],
+                'feedback': row[1],
+                'created_at': row[2]
+            }
+            for row in cursor.fetchall()
+        ]
+        
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total_ratings': total_ratings,
+                'average_rating': round(avg_rating, 2) if avg_rating else 0,
+                'rating_distribution': rating_distribution,
+                'recent_feedback': recent_feedback
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health():

@@ -601,8 +601,9 @@ async function handleChatSubmit(event) {
             appendMessage(response.response, 'bot');
             showError(null, response.response);
         } else {
-            // Display bot response
-            appendMessage(response.response, 'bot', response.relevant_car_ids);
+            // Display bot response with message ID for rating
+            const messageId = response.message_id || null;
+            appendMessage(response.response, 'bot', response.relevant_car_ids || [], messageId);
             
             // Add bot response to conversation history
             conversationHistory.push({ role: 'bot', text: response.response });
@@ -620,6 +621,132 @@ async function handleChatSubmit(event) {
         showError(null, errorMsg);
     } finally {
         isLoading = false;
+    }
+}
+
+// --- ANALYTICS PAGE ---
+async function renderAnalyticsPage() {
+    const container = document.getElementById('analytics-container');
+    if (!container) return;
+    
+    try {
+        container.innerHTML = `
+            <div class="loading-container">
+                <div class="spinner"></div>
+                <p class="text-gray-400 mt-4">Analyzing data...</p>
+            </div>
+        `;
+        
+        const { getAnalyticsInsights } = await import('./api.js');
+        const response = await getAnalyticsInsights();
+        
+        if (!response.success) {
+            throw new Error(response.error || 'Failed to load analytics');
+        }
+        
+        const insights = response.insights;
+        
+        container.innerHTML = `
+            <div class="space-y-6">
+                <!-- Summary Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="analytics-card">
+                        <h3 class="text-sm text-gray-400 mb-1">Total Cars</h3>
+                        <p class="text-3xl font-bold text-white">${insights.summary.total_cars}</p>
+                    </div>
+                    <div class="analytics-card">
+                        <h3 class="text-sm text-gray-400 mb-1">Total Makes</h3>
+                        <p class="text-3xl font-bold text-white">${insights.summary.total_makes}</p>
+                    </div>
+                    <div class="analytics-card">
+                        <h3 class="text-sm text-gray-400 mb-1">Avg Price</h3>
+                        <p class="text-3xl font-bold text-white">${new Intl.NumberFormat().format(insights.summary.average_price)}</p>
+                    </div>
+                    <div class="analytics-card">
+                        <h3 class="text-sm text-gray-400 mb-1">Avg Rating</h3>
+                        <p class="text-3xl font-bold text-white">${insights.summary.average_rating.toFixed(1)} ⭐</p>
+                    </div>
+                </div>
+                
+                <!-- AI Insights -->
+                <div class="analytics-card">
+                    <h2 class="text-2xl font-bold text-white mb-4">🤖 AI-Powered Insights</h2>
+                    <div class="prose prose-invert max-w-none">
+                        <div class="text-gray-300 whitespace-pre-line">${insights.ai_insights || 'AI insights unavailable'}</div>
+                    </div>
+                </div>
+                
+                <!-- Top Makes -->
+                <div class="analytics-card">
+                    <h2 class="text-2xl font-bold text-white mb-4">Top Makes</h2>
+                    <div class="space-y-2">
+                        ${insights.top_makes.map((item, index) => `
+                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg">
+                                <span class="text-white font-semibold">${index + 1}. ${item.make}</span>
+                                <span class="text-blue-400 font-bold">${item.count} cars</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                
+                <!-- Price Distribution -->
+                <div class="analytics-card">
+                    <h2 class="text-2xl font-bold text-white mb-4">Price Distribution</h2>
+                    <div class="space-y-2">
+                        ${Object.entries(insights.price_distribution).map(([range, count]) => `
+                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg">
+                                <span class="text-white">${range}</span>
+                                <span class="text-blue-400 font-bold">${count} cars</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                
+                <!-- Top Rated Cars -->
+                <div class="analytics-card">
+                    <h2 class="text-2xl font-bold text-white mb-4">Top Rated Cars</h2>
+                    <div class="space-y-2">
+                        ${insights.top_rated_cars.map((car, index) => `
+                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg hover:bg-opacity-70 cursor-pointer" data-car-id="${car.id}">
+                                <div>
+                                    <span class="text-white font-semibold">${index + 1}. ${car.make} ${car.model}</span>
+                                    <span class="text-yellow-400 ml-2">⭐ ${car.rating.toFixed(1)}</span>
+                                </div>
+                                <span class="text-blue-400 font-bold">${new Intl.NumberFormat().format(car.price)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add click handlers for top rated cars
+        container.querySelectorAll('[data-car-id]').forEach(el => {
+            el.addEventListener('click', async () => {
+                const carId = parseInt(el.dataset.carId);
+                const { getCar } = await import('./api.js');
+                try {
+                    const carResponse = await getCar(carId);
+                    if (carResponse.success && carResponse.car) {
+                        showCarInfoModal(carResponse.car);
+                    }
+                } catch (error) {
+                    console.error('Error loading car:', error);
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Error rendering analytics:', error);
+        const container = document.getElementById('analytics-container');
+        if (container) {
+            container.innerHTML = `
+                <div class="error-container">
+                    <div class="error-icon">⚠️</div>
+                    <h3 class="text-xl font-bold text-white mb-2">Failed to Load Analytics</h3>
+                    <p class="text-gray-400">${error.message || 'An error occurred'}</p>
+                </div>
+            `;
+        }
     }
 }
 
@@ -715,6 +842,14 @@ function setupEventListeners() {
         DOM.navButtons.chatbot.addEventListener('click', () => {
             if (!requireAuth()) return;
             showPage('chatbot');
+        });
+    }
+    
+    if (DOM.navButtons.analytics) {
+        DOM.navButtons.analytics.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('analytics');
+            await renderAnalyticsPage();
         });
     }
     

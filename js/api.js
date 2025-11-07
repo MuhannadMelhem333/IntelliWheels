@@ -262,6 +262,44 @@ export async function handleChatbotQuery(query, apiKey, history = []) {
 }
 
 /**
+ * Rate a chatbot response
+ * @param {string} messageId - The message ID to rate
+ * @param {number} rating - Rating from 1 to 5
+ * @param {string} feedback - Optional feedback text
+ * @returns {Promise<Object>} Response object
+ */
+export async function rateChatbotResponse(messageId, rating, feedback = '') {
+    return await apiRequest('/chatbot/rate', {
+        method: 'POST',
+        body: JSON.stringify({
+            message_id: messageId,
+            rating: rating,
+            feedback: feedback
+        })
+    });
+}
+
+/**
+ * Get AI-powered analytics insights
+ * @returns {Promise<Object>} Analytics insights
+ */
+export async function getAnalyticsInsights() {
+    return await apiRequest('/analytics/insights', {
+        method: 'GET'
+    });
+}
+
+/**
+ * Get chatbot statistics
+ * @returns {Promise<Object>} Chatbot stats
+ */
+export async function getChatbotStats() {
+    return await apiRequest('/chatbot/stats', {
+        method: 'GET'
+    });
+}
+
+/**
  * Health check
  */
 export async function healthCheck() {
