@@ -300,20 +300,95 @@ export function createParticles() {
  * Adds a new message to the chatbot log with the new professional design.
  * @param {string} message - The text content of the message.
  * @param {string} sender - The sender ('user' or 'bot').
+ * @param {Array<number>} carIds - Optional array of car IDs to display as recommendations.
  */
-export function appendMessage(message, sender) {
+export async function appendMessage(message, sender, carIds = []) {
     const messageEl = document.createElement('div');
     messageEl.className = `message-container ${sender}-message`;
     const avatarName = sender === 'bot' ? 'AI' : 'You';
+
+    let carRecommendationsHtml = '';
+    const carDataMap = new Map();
+    
+    if (sender === 'bot' && carIds && carIds.length > 0) {
+        // Fetch car details and create recommendation cards
+        const { getCar } = await import('./api.js');
+        
+        carRecommendationsHtml = '<div class="car-recommendations mt-4 space-y-2">';
+        carRecommendationsHtml += '<p class="text-sm text-gray-400 font-semibold mb-2">💡 Recommended Cars:</p>';
+        
+        // Fetch all cars in parallel
+        const carPromises = carIds.slice(0, 3).map(async (carId) => {
+            try {
+                const carResponse = await getCar(carId);
+                if (carResponse.success && carResponse.car) {
+                    return carResponse.car;
+                }
+            } catch (error) {
+                console.error(`Error fetching car ${carId}:`, error);
+            }
+            return null;
+        });
+        
+        const cars = await Promise.all(carPromises);
+        
+        for (const car of cars) {
+            if (car) {
+                carDataMap.set(car.id, car);
+                carRecommendationsHtml += `
+                    <div class="car-recommendation-card bg-gray-800 bg-opacity-50 rounded-lg p-3 border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer" data-car-id="${car.id}">
+                        <div class="flex items-center gap-3">
+                            ${car.image ? `<img src="${car.image}" alt="${car.make} ${car.model}" class="w-16 h-16 object-cover rounded" onerror="this.style.display='none'">` : ''}
+                            <div class="flex-1">
+                                <h4 class="text-white font-semibold">${car.make} ${car.model} ${car.year ? `(${car.year})` : ''}</h4>
+                                <p class="text-blue-400 font-bold">${new Intl.NumberFormat().format(car.price || 0)} ${car.currency || 'AED'}</p>
+                                ${car.rating > 0 ? `<p class="text-yellow-400 text-sm">⭐ ${car.rating.toFixed(1)} (${car.reviews || 0} reviews)</p>` : ''}
+                            </div>
+                            <button class="text-blue-400 hover:text-blue-300 text-sm font-semibold">View →</button>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        carRecommendationsHtml += '</div>';
+    }
 
     messageEl.innerHTML = `
         <div class="avatar">${avatarName}</div>
         <div class="message-content">
             <p>${message}</p>
+            ${carRecommendationsHtml}
         </div>
     `;
     DOM.chatbotLog.appendChild(messageEl);
     DOM.chatbotLog.scrollTop = DOM.chatbotLog.scrollHeight;
+    
+    // Add click handlers for car recommendation cards
+    if (carIds && carIds.length > 0 && carDataMap.size > 0) {
+        const cards = messageEl.querySelectorAll('.car-recommendation-card');
+        cards.forEach(card => {
+            card.addEventListener('click', async () => {
+                const carId = parseInt(card.dataset.carId);
+                const car = carDataMap.get(carId);
+                if (car) {
+                    // Use the showCarInfoModal function from the current module
+                    showCarInfoModal(car);
+                } else {
+                    // Fallback: fetch car if not in map
+                    const { getCar } = await import('./api.js');
+                    try {
+                        const response = await getCar(carId);
+                        if (response.success && response.car) {
+                            showCarInfoModal(response.car);
+                        }
+                    } catch (error) {
+                        console.error('Error loading car details:', error);
+                    }
+                }
+            });
+        });
+    }
 }
 
 /**

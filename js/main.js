@@ -306,11 +306,22 @@ async function handleDeleteCar(carId) {
 }
 
 // --- CHATBOT HANDLING ---
-async function handleChatSubmit() {
-    const message = DOM.chatbotInput.value.trim();
-    if (!message || isLoading) return;
+async function handleChatSubmit(event) {
+    // Prevent any default form submission behavior
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    const message = DOM.chatbotInput?.value?.trim();
+    if (!message || isLoading || !DOM.chatbotInput) return;
 
-    appendMessage(message, 'user');
+    // Ensure we're on the chatbot page
+    if (DOM.pages.chatbot.classList.contains('hidden')) {
+        showPage('chatbot');
+    }
+
+    await appendMessage(message, 'user');
     
     // Add user message to conversation history
     conversationHistory.push({ role: 'user', text: message });
@@ -321,17 +332,25 @@ async function handleChatSubmit() {
 
     try {
         console.log('Submitting chat message with API key:', GEMINI_API_KEY ? 'Present' : 'Missing');
-        const responseText = await handleChatbotQuery(message, GEMINI_API_KEY, conversationHistory);
+        const response = await handleChatbotQuery(message, GEMINI_API_KEY, conversationHistory);
         hideTypingIndicator();
         
-        // Check if response starts with "Error:" and handle it
-        if (responseText && responseText.startsWith('Error:')) {
-            appendMessage(responseText, 'bot');
-            showError(null, responseText);
+        if (!response.success || response.response.startsWith('Error:')) {
+            appendMessage(response.response || "I'm sorry, I couldn't generate a response.", 'bot');
+            if (response.error) {
+                showError(null, response.response);
+            }
         } else {
-            appendMessage(responseText || "I'm sorry, I couldn't generate a response.", 'bot');
+            // Display bot response
+            appendMessage(response.response, 'bot', response.relevant_car_ids);
+            
             // Add bot response to conversation history
-            conversationHistory.push({ role: 'bot', text: responseText });
+            conversationHistory.push({ role: 'bot', text: response.response });
+            
+            // Log intent for debugging
+            if (response.intent) {
+                console.log('Detected intent:', response.intent);
+            }
         }
     } catch (error) {
         hideTypingIndicator();
@@ -468,10 +487,22 @@ function setupEventListeners() {
     DOM.sortFilter.addEventListener('change', applyFiltersAndRender);
 
     // Chatbot
-    DOM.chatbotSendBtn.addEventListener('click', handleChatSubmit);
-    DOM.chatbotInput.addEventListener('keypress', (event) => {
-        if (event.key === 'Enter') handleChatSubmit();
-    });
+    if (DOM.chatbotSendBtn) {
+        DOM.chatbotSendBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleChatSubmit(e);
+        });
+    }
+    if (DOM.chatbotInput) {
+        DOM.chatbotInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.stopPropagation();
+                handleChatSubmit(event);
+            }
+        });
+    }
 
     // Modal
     DOM.carInfoCloseBtn.addEventListener('click', () => DOM.carInfoModal.classList.add('hidden'));

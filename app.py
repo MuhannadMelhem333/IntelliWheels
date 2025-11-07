@@ -77,6 +77,41 @@ def init_db():
         )
     ''')
     
+    # Chat sessions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL UNIQUE,
+            user_session TEXT,
+            title TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Chat messages table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
+        )
+    ''')
+    
+    # Create index for faster queries
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session 
+        ON chat_messages(session_id, created_at)
+    ''')
+    
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_chat_sessions_user 
+        ON chat_sessions(user_session, updated_at)
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -410,9 +445,154 @@ def remove_favorite(car_id):
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+def detect_user_intent(query):
+    """Detect user intent from query"""
+    query_lower = query.lower()
+    
+    # Buying intent
+    buying_keywords = ['buy', 'purchase', 'looking for', 'want', 'need', 'interested in', 'shopping for', 'considering']
+    if any(kw in query_lower for kw in buying_keywords):
+        return 'buying'
+    
+    # Comparing intent
+    comparing_keywords = ['compare', 'vs', 'versus', 'difference', 'better', 'which is', 'between']
+    if any(kw in query_lower for kw in comparing_keywords):
+        return 'comparing'
+    
+    # Negotiating intent
+    negotiating_keywords = ['discount', 'deal', 'negotiate', 'best price', 'lower price', 'cheaper', 'offer', 'bargain']
+    if any(kw in query_lower for kw in negotiating_keywords):
+        return 'negotiating'
+    
+    # Price inquiry
+    price_keywords = ['price', 'cost', 'how much', 'expensive', 'affordable', 'budget']
+    if any(kw in query_lower for kw in price_keywords):
+        return 'price_inquiry'
+    
+    # Feature inquiry
+    feature_keywords = ['spec', 'feature', 'engine', 'horsepower', 'fuel', 'mileage', 'safety', 'rating']
+    if any(kw in query_lower for kw in feature_keywords):
+        return 'feature_inquiry'
+    
+    # Recommendation
+    recommendation_keywords = ['recommend', 'suggest', 'best', 'good', 'top', 'popular']
+    if any(kw in query_lower for kw in recommendation_keywords):
+        return 'recommendation'
+    
+    return 'general'
+
+def query_cars_intelligently(query, intent, detected_currency=None):
+    """Intelligently query cars from database based on query and intent"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Extract tokens for search (filter out common words)
+    common_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'can', 'may', 'might', 'must', 'what', 'which', 'where', 'when', 'why', 'how', 'about', 'show', 'me', 'i', 'want', 'need', 'looking', 'for', 'find', 'get', 'buy', 'price', 'cost', 'compare', 'best', 'good', 'car', 'cars', 'vehicle', 'vehicles'}
+    tokens = [t for t in re.findall(r"[A-Za-z\u0600-\u06FF0-9]+", query) if len(t) >= 2 and t.lower() not in common_words]
+    
+    # Extract price range if mentioned
+    price_pattern = re.search(r'(\d+)\s*(?:k|thousand|million)?', query.lower())
+    max_price = None
+    if price_pattern:
+        price_val = int(price_pattern.group(1))
+        if 'k' in query.lower() or 'thousand' in query.lower():
+            max_price = price_val * 1000
+        elif 'million' in query.lower():
+            max_price = price_val * 1000000
+        else:
+            max_price = price_val
+    
+    # Extract year if mentioned
+    year_pattern = re.search(r'\b(19|20)\d{2}\b', query)
+    year_filter = int(year_pattern.group(0)) if year_pattern else None
+    
+    # Build SQL query
+    where_clauses = []
+    params = []
+    
+    # Make/Model search
+    if tokens:
+        make_model_clauses = []
+        for token in tokens[:8]:  # Limit tokens
+            pattern = f"%{token}%"
+            make_model_clauses.append("(make LIKE ? OR model LIKE ?)")
+            params.extend([pattern, pattern])
+        if make_model_clauses:
+            where_clauses.append(f"({' OR '.join(make_model_clauses)})")
+    
+    # Year filter
+    if year_filter:
+        where_clauses.append("year = ?")
+        params.append(year_filter)
+    
+    # Price filter
+    if max_price:
+        where_clauses.append("price <= ?")
+        params.append(max_price)
+    
+    # Currency filter
+    if detected_currency:
+        where_clauses.append("currency = ?")
+        params.append(detected_currency)
+    
+    # Build final query - if no specific filters, get diverse sample
+    if where_clauses:
+        where_sql = " AND ".join(where_clauses)
+    else:
+        # No specific filters, get diverse sample
+        where_sql = "1=1"
+    
+    # Order by relevance
+    if intent == 'price_inquiry' or intent == 'negotiating':
+        order_by = "ORDER BY price ASC"
+    elif intent == 'recommendation':
+        order_by = "ORDER BY rating DESC, reviews DESC"
+    else:
+        order_by = "ORDER BY year DESC, rating DESC"
+    
+    sql = f"""
+        SELECT id, make, model, year, price, currency, rating, reviews, specs, engines, statistics
+        FROM cars 
+        WHERE {where_sql}
+        {order_by}
+        LIMIT 30
+    """
+    
+    try:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        cars = []
+        for row in rows:
+            try:
+                car = {
+                    'id': row[0],
+                    'make': row[1],
+                    'model': row[2],
+                    'year': row[3],
+                    'price': row[4],
+                    'currency': row[5],
+                    'rating': row[6] or 0.0,
+                    'reviews': row[7] or 0,
+                    'specs': json.loads(row[8]) if row[8] else {},
+                    'engines': json.loads(row[9]) if row[9] else [],
+                    'statistics': json.loads(row[10]) if row[10] else {}
+                }
+                cars.append(car)
+            except Exception as e:
+                print(f"Error parsing car row: {e}")
+                continue
+        conn.close()
+        return cars
+    except Exception as e:
+        print(f"Error querying cars: {e}")
+        import traceback
+        traceback.print_exc()
+        conn.close()
+        return []
+
 @app.route('/api/chatbot', methods=['POST'])
 def chatbot():
-    """AI Chatbot endpoint using Google Gemini REST API"""
+    """Enhanced AI Chatbot endpoint with negotiation capabilities and intelligent database querying"""
     if not REQUESTS_AVAILABLE:
         return jsonify({
             'success': False,
@@ -438,22 +618,21 @@ def chatbot():
         # Merge with server-side session history
         server_history = CHAT_SESSIONS.get(session_id, [])
         combined_history = server_history + history if history else server_history
-
-        # Limit combined history to last 10 messages to avoid token limits
-        if len(combined_history) > 10:
-            combined_history = combined_history[-10:]
-            print(f"⚠️ Conversation history truncated to last 10 messages for session {session_id}")
         
-        # Detect Arabic to respond in user's language (check query and history)
+        # Limit combined history to last 15 messages to maintain context
+        if len(combined_history) > 15:
+            combined_history = combined_history[-15:]
+            print(f"⚠️ Conversation history truncated to last 15 messages for session {session_id}")
+        
+        # Detect Arabic to respond in user's language
         is_arabic = bool(re.search(r"[\u0600-\u06FF]", query))
         if not is_arabic and combined_history:
-            # Check if any previous message was in Arabic
-            for msg in combined_history[-3:]:  # Check last 3 messages
+            for msg in combined_history[-3:]:
                 if msg.get('text') and re.search(r"[\u0600-\u06FF]", msg.get('text', '')):
                     is_arabic = True
                     break
 
-        # Detect region/country mentioned in the query to guide regional pricing
+        # Detect region/country and currency
         region_currency_map = {
             'jordan': 'JOD', 'amman': 'JOD',
             'uae': 'AED', 'dubai': 'AED', 'abu dhabi': 'AED', 'united arab emirates': 'AED',
@@ -479,66 +658,141 @@ def chatbot():
                 detected_currency = cur
                 break
 
-        # Build a relevant car sample based on the query terms
+        # Detect user intent
+        intent = detect_user_intent(query)
+        print(f"🎯 Detected intent: {intent}")
+
+        # Query cars intelligently based on intent and query
+        relevant_cars = query_cars_intelligently(query, intent, detected_currency)
+        print(f"🔍 Initial query returned {len(relevant_cars)} cars")
+        
+        # Always ensure we have cars to show - if no matches, get diverse sample
         conn = get_db()
         cursor = conn.cursor()
-
-        # Extract simple tokens for LIKE search (make/model/year)
-        tokens = [t for t in re.findall(r"[A-Za-z\u0600-\u06FF0-9]+", query) if len(t) >= 3]
-        like_clauses = []
-        params = []
-        for t in tokens[:5]:  # limit to first 5 tokens
-            like_clauses.append("(make LIKE ? OR model LIKE ? OR CAST(year AS TEXT) LIKE ?)")
-            pattern = f"%{t}%"
-            params.extend([pattern, pattern, pattern])
-
-        cars_sample = []
-        if like_clauses:
-            sql = (
-                "SELECT make, model, year, price, currency FROM cars "
-                f"WHERE {' AND '.join(like_clauses)} "
-                "ORDER BY year DESC LIMIT 20"
-            )
-            try:
-                cursor.execute(sql, params)
-                cars_sample = cursor.fetchall()
-            except Exception:
-                cars_sample = []
-
-        # Fallback sample if no relevant matches
-        if not cars_sample:
-            cursor.execute("SELECT make, model, year, price, currency FROM cars ORDER BY id DESC LIMIT 10")
-            cars_sample = cursor.fetchall()
-
+        
+        # Check total cars in database
+        cursor.execute("SELECT COUNT(*) FROM cars")
+        total_cars = cursor.fetchone()[0]
+        print(f"📊 Total cars in database: {total_cars}")
+        
+        if not relevant_cars or len(relevant_cars) < 10:
+            # Get additional cars to ensure good coverage
+            cursor.execute("""
+                SELECT id, make, model, year, price, currency, rating, reviews, specs, engines, statistics
+                FROM cars 
+                ORDER BY RANDOM() 
+                LIMIT 20
+            """)
+            rows = cursor.fetchall()
+            existing_ids = {car['id'] for car in relevant_cars}
+            for row in rows:
+                car_id = row[0]
+                if car_id not in existing_ids:
+                    relevant_cars.append({
+                        'id': car_id,
+                        'make': row[1],
+                        'model': row[2],
+                        'year': row[3],
+                        'price': row[4],
+                        'currency': row[5],
+                        'rating': row[6] or 0.0,
+                        'reviews': row[7] or 0,
+                        'specs': json.loads(row[8]) if row[8] else {},
+                        'engines': json.loads(row[9]) if row[9] else [],
+                        'statistics': json.loads(row[10]) if row[10] else {}
+                    })
+                    if len(relevant_cars) >= 30:
+                        break
+        
+        # If still no cars, get any cars from database
+        if not relevant_cars:
+            cursor.execute("""
+                SELECT id, make, model, year, price, currency, rating, reviews, specs, engines, statistics
+                FROM cars 
+                ORDER BY id DESC
+                LIMIT 30
+            """)
+            rows = cursor.fetchall()
+            for row in rows:
+                relevant_cars.append({
+                    'id': row[0],
+                    'make': row[1],
+                    'model': row[2],
+                    'year': row[3],
+                    'price': row[4],
+                    'currency': row[5],
+                    'rating': row[6] or 0.0,
+                    'reviews': row[7] or 0,
+                    'specs': json.loads(row[8]) if row[8] else {},
+                    'engines': json.loads(row[9]) if row[9] else [],
+                    'statistics': json.loads(row[10]) if row[10] else {}
+                })
+        
         conn.close()
 
-        # Build context
-        cars_context = "\n".join([
-            f"- {row[0]} {row[1]} ({row[2]}): {row[3]} {row[4]}"
-            for row in cars_sample
-        ])
+        # Build comprehensive car context
+        cars_context_parts = []
+        for car in relevant_cars[:20]:  # Limit to 20 most relevant
+            car_info = f"ID: {car['id']} | {car['make']} {car['model']} ({car['year']})"
+            car_info += f" | Price: {car['price']} {car['currency']}"
+            if car['rating'] > 0:
+                car_info += f" | Rating: {car['rating']}/5.0 ({car['reviews']} reviews)"
+            
+            specs = car.get('specs', {})
+            if specs:
+                if specs.get('bodyStyle'):
+                    car_info += f" | Body: {specs['bodyStyle']}"
+                if specs.get('horsepower'):
+                    car_info += f" | HP: {specs['horsepower']}"
+                if specs.get('engine'):
+                    car_info += f" | Engine: {specs['engine']}"
+                if specs.get('fuelEconomy'):
+                    car_info += f" | Fuel: {specs['fuelEconomy']}"
+            
+            cars_context_parts.append(car_info)
+        
+        cars_context = "\n".join(cars_context_parts) if cars_context_parts else "No cars found in database."
+        print(f"📝 Sending {len(relevant_cars)} cars to AI (showing {len(cars_context_parts)} in context)")
 
-        # Build system prompt with catalog-first policy and regional fallback
+        # Build enhanced system prompt with negotiation capabilities
         language_hint = "Arabic" if is_arabic else "English"
-        region_hint_line = (
-            f"Detected region: {detected_region} | Preferred currency: {detected_currency}\n"
-            if detected_region and detected_currency else ""
-        )
+        region_hint = f"User's region: {detected_region} | Preferred currency: {detected_currency}\n" if detected_region else ""
+        
+        system_instruction = f"""You are IntelliWheels' premium AI automotive assistant and negotiation expert. Your role is to help users find the perfect car, negotiate deals, compare options, and answer all automotive questions.
 
-        system_instruction = f"""You are IntelliWheels' automotive expert assistant.
-Follow this policy:
-1) If the user's question matches vehicles in the IntelliWheels catalog CONTEXT below, answer using that catalog data (prices/specs) verbatim.
-2) If there is no relevant match in the catalog, answer using your general automotive knowledge and typical pricing for the user's region. Provide an approximate range and clearly state that prices vary by trim, mileage, and condition. Use the preferred currency if provided.
-3) If the user requests a specific country/region and the catalog lacks regional pricing, include a short note that the catalog has no regional price and you're giving a typical market estimate.
+CAPABILITIES:
+1. CAR RECOMMENDATIONS: Suggest cars from the catalog based on user needs, budget, and preferences
+2. PRICE NEGOTIATION: Help negotiate prices, suggest discounts, find best deals, and compare prices across similar models
+3. COMPARISONS: Compare multiple cars side-by-side on specs, price, ratings, and features
+4. DETAILED INFORMATION: Provide comprehensive information about any car including specs, engines, ratings, and statistics
+5. DEAL MAKING: Help structure deals, suggest financing options, and find the best value propositions
 
-{region_hint_line}Answer in {language_hint}. Be concise and helpful. If no clear match, ask one short clarifying question.
+NEGOTIATION STRATEGY:
+- When users ask about prices or discounts, suggest reasonable negotiation ranges (typically 5-15% off listed price)
+- Compare prices with similar models to show value
+- Highlight features that justify the price
+- Suggest alternative models if budget is a concern
+- Be helpful and realistic about market prices
 
-CATALOG CONTEXT (sample rows):
+RESPONSE GUIDELINES:
+- Always prioritize catalog data when available (use exact prices, specs, and ratings from the catalog)
+- If catalog data doesn't match, use general automotive knowledge but clearly state it's an estimate
+- When recommending cars, mention the car ID so users can view details (e.g., "Car ID: 123")
+- Be conversational, friendly, and professional
+- For negotiations, be helpful and suggest realistic deals
+- Answer in {language_hint}
+{region_hint}
+- If user asks about a specific car, provide detailed information from the catalog
+- When comparing, highlight key differences clearly
+- Always be honest about limitations and uncertainties
+
+CATALOG DATA (use this as your primary source):
 {cars_context}
-"""
+
+Remember: You have access to {len(relevant_cars)} cars in the catalog. Use this data to provide accurate, helpful responses. When users mention car IDs, reference those specific cars."""
         
         try:
-            # Use Gemini REST API directly
+            # Use Gemini REST API
             api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
             
             headers = {
@@ -549,7 +803,7 @@ CATALOG CONTEXT (sample rows):
             # Build conversation contents with history
             contents = []
             
-            # Convert history to Gemini format (alternating user/model)
+            # Convert history to Gemini format
             for msg in combined_history:
                 role = "user" if msg.get('role') == 'user' else "model"
                 contents.append({
@@ -563,26 +817,24 @@ CATALOG CONTEXT (sample rows):
                 "role": "user"
             })
             
-            # Build payload with system instruction and conversation history
+            # Build payload with enhanced configuration
             payload = {
                 "contents": contents,
                 "systemInstruction": {
                     "parts": [{"text": system_instruction}]
                 },
                 "generationConfig": {
-                    "temperature": 0.2,
-                    "topP": 0.8,
+                    "temperature": 0.7,  # Increased for more natural conversation
+                    "topP": 0.9,
                     "topK": 40,
-                    "maxOutputTokens": 1024
+                    "maxOutputTokens": 2048  # Increased for detailed responses
                 }
             }
             
-            print(f"📝 Conversation history: {len(combined_history)} previous messages (session {session_id})")
+            print(f"📝 Intent: {intent} | Found {len(relevant_cars)} relevant cars | History: {len(combined_history)} messages")
+            print(f"📝 Query: {query[:80]}...")
             
-            print(f"📝 Sending request to Gemini API for query: {query[:50]}...")
-            print(f"🔑 Using API key: {api_key[:10]}...")
-            
-            response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+            response = requests.post(api_url, headers=headers, json=payload, timeout=45)
             
             print(f"📥 Response status: {response.status_code}")
             
@@ -591,7 +843,6 @@ CATALOG CONTEXT (sample rows):
                 error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}: {response.text}')
                 print(f"❌ Gemini API Error: {error_msg}")
                 
-                # Provide helpful error messages
                 if response.status_code == 401 or response.status_code == 403:
                     error_msg = "Invalid API key. Please check your Gemini API key."
                 elif response.status_code == 429:
@@ -613,7 +864,6 @@ CATALOG CONTEXT (sample rows):
             if 'candidates' in response_data and len(response_data['candidates']) > 0:
                 candidate = response_data['candidates'][0]
                 
-                # Check for finish reason
                 if 'finishReason' in candidate:
                     finish_reason = candidate['finishReason']
                     if finish_reason == 'SAFETY':
@@ -624,14 +874,12 @@ CATALOG CONTEXT (sample rows):
                     elif finish_reason == 'MAX_TOKENS':
                         print("⚠️ Response hit max tokens limit")
                 
-                # Extract text from content.parts
                 if 'content' in candidate and 'parts' in candidate['content']:
                     for part in candidate['content']['parts']:
                         if 'text' in part:
                             response_text = part['text']
                             break
             
-            # Check for prompt feedback (blocked)
             if 'promptFeedback' in response_data:
                 if 'blockReason' in response_data['promptFeedback']:
                     return jsonify({
@@ -642,22 +890,29 @@ CATALOG CONTEXT (sample rows):
             if not response_text or response_text.strip() == "":
                 response_text = "I'm sorry, I received an empty response. Please try asking your question differently."
             
-            print(f"📤 Returning response: {response_text[:100]}...")
+            print(f"📤 Response length: {len(response_text)} characters")
 
             # Persist conversation to server-side store
-            # Append the user query and model response for this session
             session_messages = CHAT_SESSIONS.get(session_id, [])
             session_messages.append({ 'role': 'user', 'text': query })
             session_messages.append({ 'role': 'bot', 'text': response_text })
-            # Keep only last 10 messages
-            if len(session_messages) > 10:
-                session_messages = session_messages[-10:]
+            # Keep last 15 messages
+            if len(session_messages) > 15:
+                session_messages = session_messages[-15:]
             CHAT_SESSIONS[session_id] = session_messages
+            
+            # Extract car IDs mentioned in response for frontend linking
+            car_ids_mentioned = []
+            for car in relevant_cars:
+                if car['make'].lower() in response_text.lower() and car['model'].lower() in response_text.lower():
+                    car_ids_mentioned.append(car['id'])
             
             return jsonify({
                 'success': True,
                 'response': response_text,
-                'session': session_id
+                'session': session_id,
+                'intent': intent,
+                'relevant_car_ids': car_ids_mentioned[:5]  # Return up to 5 relevant car IDs
             })
             
         except requests.exceptions.Timeout:
@@ -677,7 +932,6 @@ CATALOG CONTEXT (sample rows):
             print(f"❌ Gemini API Error: {error_msg}")
             print(f"Error type: {type(api_error)}")
             
-            # Provide more helpful error messages
             if 'API key' in error_msg or 'authentication' in error_msg.lower():
                 error_msg = "Invalid API key. Please check your Gemini API key."
             elif 'quota' in error_msg.lower() or 'limit' in error_msg.lower():

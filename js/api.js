@@ -145,10 +145,15 @@ export async function removeFavorite(carId) {
  * @param {string} query - The user's message
  * @param {string} apiKey - The Gemini API key
  * @param {Array} history - Conversation history array with {role: 'user'|'bot', text: string}
+ * @returns {Promise<Object>} Response object with {success, response, intent, relevant_car_ids, error}
  */
 export async function handleChatbotQuery(query, apiKey, history = []) {
     if (!apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-        return "Error: API key is missing. Please add your Gemini API key to enable the chatbot.";
+        return {
+            success: false,
+            response: "Error: API key is missing. Please add your Gemini API key to enable the chatbot.",
+            error: "API key missing"
+        };
     }
 
     try {
@@ -160,21 +165,33 @@ export async function handleChatbotQuery(query, apiKey, history = []) {
                 query: query,
                 api_key: apiKey,
                 history: history, // Send conversation history
-                session: USER_SESSION // Send session id for server-side memory
+                session: USER_SESSION // User session
             })
         });
 
         console.log('Chatbot response:', response);
 
         if (response.success) {
-            return response.response || "I'm sorry, I couldn't generate a response.";
+            return {
+                success: true,
+                response: response.response || "I'm sorry, I couldn't generate a response.",
+                intent: response.intent || 'general',
+                relevant_car_ids: response.relevant_car_ids || []
+            };
         } else {
-            // Return the error message from the backend
-            return `Error: ${response.error || "I couldn't generate a response. Please try again."}`;
+            return {
+                success: false,
+                response: `Error: ${response.error || "I couldn't generate a response. Please try again."}`,
+                error: response.error
+            };
         }
     } catch (error) {
         console.error('Chatbot error:', error);
-        return `Error: An error occurred while processing your request. ${error.message || 'Please try again later.'}`;
+        return {
+            success: false,
+            response: `Error: An error occurred while processing your request. ${error.message || 'Please try again later.'}`,
+            error: error.message
+        };
     }
 }
 
