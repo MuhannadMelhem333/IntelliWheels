@@ -366,3 +366,58 @@ export async function logout() {
 export async function verifyAuth() {
     return await apiRequest('/auth/verify');
 }
+
+/**
+ * Send a message to the AI Listing Assistant
+ * @param {string} query - The user's message
+ * @param {string} apiKey - The Gemini API key
+ * @param {Array} history - Conversation history array with {role: 'user'|'bot', text: string}
+ * @returns {Promise<Object>} Response object with {success, response, action_type, listing_data, error}
+ */
+export async function handleListingAssistantQuery(query, apiKey, history = []) {
+    if (!apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
+        return {
+            success: false,
+            response: "Error: API key is missing. Please add your Gemini API key to enable the listing assistant.",
+            error: "API key missing"
+        };
+    }
+
+    try {
+        console.log('Sending listing assistant query:', query);
+        const response = await apiRequest('/listing-assistant', {
+            method: 'POST',
+            body: JSON.stringify({
+                query: query,
+                api_key: apiKey,
+                history: history,
+                session: USER_SESSION
+            })
+        });
+
+        console.log('Listing assistant response:', response);
+
+        if (response.success) {
+            return {
+                success: true,
+                response: response.response || "I'm sorry, I couldn't generate a response.",
+                action_type: response.action_type || null,
+                listing_data: response.listing_data || null,
+                message_id: response.message_id || null
+            };
+        } else {
+            return {
+                success: false,
+                response: `Error: ${response.error || "I couldn't generate a response. Please try again."}`,
+                error: response.error
+            };
+        }
+    } catch (error) {
+        console.error('Listing assistant error:', error);
+        return {
+            success: false,
+            response: `Error: An error occurred while processing your request. ${error.message || 'Please try again later.'}`,
+            error: error.message
+        };
+    }
+}

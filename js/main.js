@@ -10,6 +10,7 @@ import {
     populateFilters, 
     showCarInfoModal, 
     appendMessage, 
+    appendListingAssistantMessage,
     createParticles, 
     showTypingIndicator, 
     hideTypingIndicator,
@@ -30,6 +31,7 @@ import {
     addFavorite, 
     removeFavorite, 
     handleChatbotQuery,
+    handleListingAssistantQuery,
     healthCheck,
     signup,
     login,
@@ -52,6 +54,7 @@ let currentFilters = {
 };
 let isLoading = false;
 let conversationHistory = []; // Store conversation history for chatbot
+let listingAssistantHistory = []; // Store conversation history for listing assistant
 let isAuthenticated = false; // Authentication state
 let currentUser = null; // Current logged-in user
 let abortController = null; // For canceling API requests
@@ -637,6 +640,116 @@ function requireAuth() {
     return true;
 }
 
+// --- LISTING ASSISTANT HANDLING ---
+async function handleListingAssistantSubmit(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    if (!requireAuth()) return;
+    
+    const message = DOM.listingAssistantInput?.value?.trim();
+    if (!message || isLoading || !DOM.listingAssistantInput) return;
+
+    if (DOM.pages.listingAssistant.classList.contains('hidden')) {
+        showPage('listingAssistant');
+    }
+
+    await appendListingAssistantMessage(message, 'user');
+    
+    listingAssistantHistory.push({ role: 'user', text: message });
+    
+    DOM.listingAssistantInput.value = '';
+    showTypingIndicator(DOM.listingAssistantLog);
+    isLoading = true;
+
+    try {
+        const response = await handleListingAssistantQuery(message, GEMINI_API_KEY, listingAssistantHistory);
+        hideTypingIndicator(DOM.listingAssistantLog);
+        
+        if (!response.success) {
+            let errorMessage = response.error || response.response || "I'm sorry, I couldn't generate a response.";
+            appendListingAssistantMessage(errorMessage, 'bot');
+            showError(null, errorMessage);
+        } else {
+            appendListingAssistantMessage(
+                response.response, 
+                'bot', 
+                response.listing_data, 
+                response.action_type
+            );
+            
+            listingAssistantHistory.push({ role: 'bot', text: response.response });
+            
+            if (listingAssistantHistory.length > 20) {
+                listingAssistantHistory = listingAssistantHistory.slice(-20);
+            }
+        }
+    } catch (error) {
+        hideTypingIndicator(DOM.listingAssistantLog);
+        const errorMsg = `I'm sorry, I encountered an error: ${error.message || 'Unknown error'}. Please try again later.`;
+        appendListingAssistantMessage(errorMsg, 'bot');
+        console.error("Listing assistant error:", error);
+        showError(null, errorMsg);
+    } finally {
+        isLoading = false;
+    }
+}
+
+// Handle creating listing from assistant
+window.handleCreateListingFromAssistant = async function(listingData) {
+    if (isLoading) return;
+    isLoading = true;
+    
+    try {
+        // Normalize the data structure
+        const carData = {
+            make: listingData.make,
+            model: listingData.model,
+            year: listingData.year ? parseInt(listingData.year) : null,
+            price: listingData.price ? parseFloat(listingData.price) : null,
+            currency: listingData.currency || 'AED',
+            image: listingData.image || listingData.image_url || '',
+            imageUrls: listingData.imageUrls || (listingData.image ? [listingData.image] : []),
+            rating: listingData.rating ? parseFloat(listingData.rating) : 0.0,
+            reviews: 0,
+            specs: {
+                bodyStyle: listingData.bodyStyle || listingData.specs?.bodyStyle || 'Unknown',
+                horsepower: listingData.horsepower || listingData.specs?.horsepower || 0,
+                engine: listingData.engine || listingData.specs?.engine || 'N/A',
+                fuelEconomy: listingData.fuelEconomy || listingData.specs?.fuelEconomy || 'N/A'
+            }
+        };
+
+        const response = await createCar(carData);
+        
+        if (response.success) {
+            showSuccess('Car listing created successfully!');
+            appendListingAssistantMessage(
+                `✅ Great! I've successfully created your listing for ${carData.make} ${carData.model}. You can view it in the Listings page.`,
+                'bot'
+            );
+            
+            // Refresh car list
+            await fetchCarData();
+            await loadMakes();
+            applyFiltersAndRender();
+        } else {
+            throw new Error(response.error || 'Failed to create listing');
+        }
+    } catch (error) {
+        console.error("Create listing from assistant error:", error);
+        appendListingAssistantMessage(
+            `❌ Sorry, I couldn't create the listing: ${error.message}. Please try again or use the manual form.`,
+            'bot'
+        );
+        showError(null, `Could not create listing: ${error.message}`);
+    } finally {
+        isLoading = false;
+    }
+};
+
 // --- CHATBOT HANDLING ---
 async function handleChatSubmit(event) {
     // Prevent any default form submission behavior
@@ -937,6 +1050,13 @@ function setupEventListeners() {
         });
     }
     
+    if (DOM.navButtons.listingAssistant) {
+        DOM.navButtons.listingAssistant.addEventListener('click', () => {
+            if (!requireAuth()) return;
+            showPage('listingAssistant');
+        });
+    }
+    
     if (DOM.navButtons.analytics) {
         DOM.navButtons.analytics.addEventListener('click', async () => {
             if (!requireAuth()) return;
@@ -1056,6 +1176,24 @@ function setupEventListeners() {
                 event.preventDefault();
                 event.stopPropagation();
                 handleChatSubmit(event);
+            }
+        });
+    }
+
+    // Listing Assistant
+    if (DOM.listingAssistantSendBtn) {
+        DOM.listingAssistantSendBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleListingAssistantSubmit(e);
+        });
+    }
+    if (DOM.listingAssistantInput) {
+        DOM.listingAssistantInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                event.stopPropagation();
+                handleListingAssistantSubmit(event);
             }
         });
     }

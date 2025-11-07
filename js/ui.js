@@ -10,6 +10,7 @@ function initializeDOM() {
             reviews: document.getElementById('nav-reviews'),
             favorites: document.getElementById('nav-favorites'),
             chatbot: document.getElementById('nav-chatbot'),
+            listingAssistant: document.getElementById('nav-listing-assistant'),
             analytics: document.getElementById('nav-analytics'),
             addListing: document.getElementById('nav-add-listing'),
         },
@@ -21,6 +22,7 @@ function initializeDOM() {
             reviews: document.getElementById('page-reviews'),
             favorites: document.getElementById('page-favorites'),
             chatbot: document.getElementById('page-chatbot'),
+            listingAssistant: document.getElementById('page-listing-assistant'),
             analytics: document.getElementById('page-analytics'),
             addListing: document.getElementById('page-add-listing'),
         },
@@ -49,6 +51,10 @@ function initializeDOM() {
         chatbotLog: document.getElementById('chatbot-log-fullscreen'),
         chatbotInput: document.getElementById('chatbot-input-fullscreen'),
         chatbotSendBtn: document.getElementById('chatbot-send-btn-fullscreen'),
+        // Listing Assistant UI
+        listingAssistantLog: document.getElementById('listing-assistant-log'),
+        listingAssistantInput: document.getElementById('listing-assistant-input'),
+        listingAssistantSendBtn: document.getElementById('listing-assistant-send-btn'),
         // Car Details Modal
         carInfoModal: document.getElementById('car-info-modal'),
         carInfoContent: document.getElementById('car-info-content'),
@@ -107,6 +113,7 @@ export function showPage(pageId) {
         'reviews': DOM.navButtons.reviews,
         'favorites': DOM.navButtons.favorites,
         'chatbot': DOM.navButtons.chatbot,
+        'listingAssistant': DOM.navButtons.listingAssistant,
         'analytics': DOM.navButtons.analytics,
         'addListing': DOM.navButtons.addListing
     };
@@ -377,6 +384,85 @@ export function createParticles() {
         particle.style.opacity = Math.random() * 0.5 + 0.1;
         bg.appendChild(particle);
     }
+    
+    // Also create particles for listing assistant
+    const listingBg = document.getElementById('listing-assistant-animation-bg');
+    if (listingBg) {
+        for (let i = 0; i < particleCount; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            const size = Math.random() * 150 + 50;
+            particle.style.width = `${size}px`;
+            particle.style.height = `${size}px`;
+            particle.style.left = `${Math.random() * 100}%`;
+            particle.style.bottom = `0px`;
+            particle.style.animationDuration = `${Math.random() * 20 + 10}s`;
+            particle.style.animationDelay = `${Math.random() * 10}s`;
+            particle.style.opacity = Math.random() * 0.5 + 0.1;
+            listingBg.appendChild(particle);
+        }
+    }
+}
+
+/**
+ * Adds a message to the listing assistant log
+ * @param {string} message - The text content of the message
+ * @param {string} sender - The sender ('user' or 'bot')
+ * @param {Object} listingData - Optional structured listing data
+ * @param {string} actionType - Optional action type (create_listing, update_listing)
+ */
+export function appendListingAssistantMessage(message, sender, listingData = null, actionType = null) {
+    if (!DOM.listingAssistantLog) {
+        console.warn('Listing assistant log container not found');
+        return;
+    }
+    
+    const messageEl = document.createElement('div');
+    const avatarName = sender === 'user' ? 'You' : 'AI';
+    messageEl.className = `message-container ${sender}-message`;
+    
+    let actionButtons = '';
+    if (sender === 'bot' && listingData && actionType === 'create_listing') {
+        actionButtons = `
+            <div class="mt-4 p-4 bg-blue-900 bg-opacity-30 rounded-lg border border-blue-500">
+                <h4 class="text-white font-semibold mb-2">📋 Listing Summary</h4>
+                <div class="text-sm text-gray-300 space-y-1">
+                    ${listingData.make ? `<p><strong>Make:</strong> ${listingData.make}</p>` : ''}
+                    ${listingData.model ? `<p><strong>Model:</strong> ${listingData.model}</p>` : ''}
+                    ${listingData.year ? `<p><strong>Year:</strong> ${listingData.year}</p>` : ''}
+                    ${listingData.price ? `<p><strong>Price:</strong> ${listingData.price} ${listingData.currency || 'AED'}</p>` : ''}
+                </div>
+                <button class="mt-3 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors create-listing-btn" data-listing-data='${JSON.stringify(listingData)}'>
+                    Create Listing
+                </button>
+            </div>
+        `;
+    }
+    
+    messageEl.innerHTML = `
+        <div class="avatar">${avatarName}</div>
+        <div class="message-content">
+            <p>${message}</p>
+            ${actionButtons}
+        </div>
+    `;
+    
+    DOM.listingAssistantLog.appendChild(messageEl);
+    DOM.listingAssistantLog.scrollTop = DOM.listingAssistantLog.scrollHeight;
+    
+    // Add click handler for create listing button
+    if (actionButtons) {
+        const createBtn = messageEl.querySelector('.create-listing-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', async () => {
+                const data = JSON.parse(createBtn.dataset.listingData);
+                // This will be handled in main.js
+                if (window.handleCreateListingFromAssistant) {
+                    await window.handleCreateListingFromAssistant(data);
+                }
+            });
+        }
+    }
 }
 
 /**
@@ -527,9 +613,13 @@ export async function appendMessage(message, sender, carIds = [], messageId = nu
 
 /**
  * Shows the bot typing indicator.
+ * @param {HTMLElement} container - Optional container element (defaults to chatbot log)
  */
-export function showTypingIndicator() {
-    if (document.getElementById('typing-indicator')) return;
+export function showTypingIndicator(container = null) {
+    const targetContainer = container || DOM.chatbotLog || DOM.listingAssistantLog;
+    if (!targetContainer) return;
+    
+    if (targetContainer.querySelector('#typing-indicator')) return;
     const typingEl = document.createElement('div');
     typingEl.id = 'typing-indicator';
     typingEl.className = 'message-container bot-message typing-indicator';
@@ -541,15 +631,19 @@ export function showTypingIndicator() {
             <div class="typing-dot"></div>
         </div>
     `;
-    DOM.chatbotLog.appendChild(typingEl);
-    DOM.chatbotLog.scrollTop = DOM.chatbotLog.scrollHeight;
+    targetContainer.appendChild(typingEl);
+    targetContainer.scrollTop = targetContainer.scrollHeight;
 }
 
 /**
  * Hides the bot typing indicator.
+ * @param {HTMLElement} container - Optional container element (defaults to chatbot log)
  */
-export function hideTypingIndicator() {
-    const typingEl = document.getElementById('typing-indicator');
+export function hideTypingIndicator(container = null) {
+    const targetContainer = container || DOM.chatbotLog || DOM.listingAssistantLog;
+    if (!targetContainer) return;
+    
+    const typingEl = targetContainer.querySelector('#typing-indicator');
     if (typingEl) {
         typingEl.remove();
     }

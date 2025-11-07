@@ -1634,6 +1634,229 @@ def get_chatbot_stats():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/listing-assistant', methods=['POST'])
+@require_auth
+def listing_assistant():
+    """AI Listing Assistant - helps users create and edit listings through natural conversation"""
+    if not REQUESTS_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Requests library not installed. Please install it with: pip install requests'
+        }), 500
+    
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        query = data.get('query', '')
+        api_key = data.get('api_key') or os.getenv('GEMINI_API_KEY')
+        history = data.get('history', [])
+        session_id = data.get('session') or request.args.get('session') or 'listing-assistant-default'
+        
+        if not query:
+            return jsonify({'success': False, 'error': 'Query is required'}), 400
+        
+        if not api_key or api_key.strip() == '':
+            return jsonify({
+                'success': False,
+                'error': 'API key is missing. Please add your Gemini API key.'
+            }), 400
+        
+        # Get user's existing listings for context
+        user_id = request.current_user['user_id']
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Get market data for pricing suggestions
+        cursor.execute('''
+            SELECT make, model, year, price, currency, rating
+            FROM cars
+            ORDER BY created_at DESC
+            LIMIT 50
+        ''')
+        market_cars = []
+        for row in cursor.fetchall():
+            market_cars.append({
+                'make': row[0],
+                'model': row[1],
+                'year': row[2],
+                'price': row[3],
+                'currency': row[4],
+                'rating': row[5] or 0.0
+            })
+        
+        # Calculate average prices by make/model for pricing suggestions
+        price_suggestions = {}
+        for car in market_cars:
+            key = f"{car['make']} {car['model']}"
+            if key not in price_suggestions:
+                price_suggestions[key] = []
+            if car['price']:
+                price_suggestions[key].append(car['price'])
+        
+        avg_prices = {}
+        for key, prices in price_suggestions.items():
+            if prices:
+                avg_prices[key] = sum(prices) / len(prices)
+        
+        conn.close()
+        
+        # Build market context
+        market_context = "Market Pricing Data:\n"
+        for key, avg_price in list(avg_prices.items())[:20]:
+            market_context += f"- {key}: Average price ~{avg_price:.0f}\n"
+        
+        # Detect Arabic
+        is_arabic = bool(re.search(r"[\u0600-\u06FF]", query))
+        
+        # Build system prompt for listing assistant
+        language_hint = "Arabic" if is_arabic else "English"
+        
+        system_instruction = f"""You are IntelliWheels' AI Listing Assistant. Your role is to help users create and edit car listings through natural conversation.
+
+CAPABILITIES:
+1. CREATE LISTINGS: Extract car information from user messages (make, model, year, price, specs, etc.) and help create listings
+2. PRICING ASSISTANCE: Suggest appropriate prices based on market data, help negotiate fair pricing
+3. EDIT LISTINGS: Help users update existing listings (price changes, spec updates, etc.)
+4. INFORMATION GATHERING: Ask clarifying questions to gather all necessary listing details
+5. VALIDATION: Ensure all required fields are provided before creating listings
+
+MARKET DATA FOR PRICING:
+{market_context}
+
+RESPONSE GUIDELINES:
+- Be conversational, helpful, and professional
+- When user wants to create a listing, extract: make, model, year, price, currency, body style, engine, horsepower, fuel economy, image URL
+- Suggest prices based on market data when user asks for pricing help
+- Ask follow-up questions if information is missing
+- When ready to create/update, provide a structured summary and ask for confirmation
+- Answer in {language_hint}
+- Format responses clearly with structured information when discussing listings
+
+IMPORTANT:
+- Always confirm details before creating/updating listings
+- Suggest realistic prices based on market data
+- Be helpful with pricing negotiations
+- Extract all car details from natural language
+
+When the user confirms they want to create or update a listing, provide a JSON-like structure with all the details so the system can process it."""
+
+        try:
+            api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'X-goog-api-key': api_key
+            }
+            
+            # Build conversation contents
+            contents = []
+            for msg in history:
+                role = "user" if msg.get('role') == 'user' else "model"
+                contents.append({
+                    "parts": [{"text": msg.get('text', '')}],
+                    "role": role
+                })
+            
+            contents.append({
+                "parts": [{"text": query}],
+                "role": "user"
+            })
+            
+            payload = {
+                "contents": contents,
+                "systemInstruction": {
+                    "parts": [{"text": system_instruction}]
+                },
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                    "topK": 40,
+                    "maxOutputTokens": 2048
+                }
+            }
+            
+            response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}: {response.text}')
+                
+                if response.status_code == 401 or response.status_code == 403:
+                    error_msg = "Invalid API key. Please check your Gemini API key."
+                elif response.status_code == 429:
+                    error_msg = "API quota exceeded. Please try again later."
+                
+                return jsonify({
+                    'success': False,
+                    'error': f'Listing Assistant Error: {error_msg}'
+                }), 500
+            
+            response_data = response.json()
+            response_text = None
+            
+            if 'candidates' in response_data and len(response_data['candidates']) > 0:
+                candidate = response_data['candidates'][0]
+                
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    for part in candidate['content']['parts']:
+                        if 'text' in part:
+                            response_text = part['text']
+                            break
+            
+            if not response_text or response_text.strip() == "":
+                response_text = "I'm sorry, I received an empty response. Please try asking your question differently."
+            
+            # Try to extract structured data from response (for listing creation/update)
+            listing_data = None
+            action_type = None
+            
+            # Look for JSON-like structures in response
+            json_match = re.search(r'\{[^{}]*"make"[^{}]*\}', response_text, re.IGNORECASE)
+            if json_match:
+                try:
+                    listing_data = json.loads(json_match.group(0))
+                    if 'make' in listing_data and 'model' in listing_data:
+                        action_type = 'create_listing'
+                except:
+                    pass
+            
+            # Check if user wants to create or update
+            query_lower = query.lower()
+            if any(word in query_lower for word in ['create', 'add', 'new listing', 'list my car']):
+                action_type = 'create_listing'
+            elif any(word in query_lower for word in ['edit', 'update', 'change', 'modify']):
+                action_type = 'update_listing'
+            
+            return jsonify({
+                'success': True,
+                'response': response_text,
+                'action_type': action_type,
+                'listing_data': listing_data,
+                'message_id': f"listing_msg_{int(time.time())}_{hashlib.md5(response_text.encode()).hexdigest()[:8]}"
+            })
+            
+        except requests.exceptions.Timeout:
+            return jsonify({
+                'success': False,
+                'error': 'Listing Assistant Error: Request timed out. Please try again.'
+            }), 500
+        except Exception as api_error:
+            error_msg = str(api_error)
+            return jsonify({
+                'success': False,
+                'error': f'Listing Assistant Error: {error_msg}'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Listing Assistant error: {str(e)}'
+        }), 500
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""
