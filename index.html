@@ -18,7 +18,11 @@
                 <button id="logo-btn" class="flex-shrink-0 text-2xl font-bold text-white focus:outline-none">
                     Intelli<span class="text-blue-400">Wheels</span>
                 </button>
-                <div class="flex items-center space-x-2 md:space-x-4">
+                <div id="nav-auth-section" class="flex items-center space-x-2 md:space-x-4">
+                    <span id="user-name-display" class="text-gray-400 text-sm hidden"></span>
+                    <button id="nav-logout" class="nav-button hidden">Logout</button>
+                </div>
+                <div id="nav-main-section" class="flex items-center space-x-2 md:space-x-4 hidden">
                     <button id="nav-listings" class="nav-button active">Listings</button>
                     <button id="nav-reviews" class="nav-button">Top Reviews</button>
                     <button id="nav-favorites" class="nav-button">Favorites</button>
@@ -31,7 +35,67 @@
 
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-        <main id="page-listings" class="page-content">
+        <!-- Login Page -->
+        <main id="page-login" class="page-content">
+            <div class="auth-container">
+                <div class="auth-card">
+                    <h2 class="text-3xl font-bold text-white mb-2">Welcome Back</h2>
+                    <p class="text-gray-400 mb-6">Sign in to access IntelliWheels</p>
+                    <form id="login-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Username or Email</label>
+                            <input type="text" id="login-username" name="username" class="form-input" placeholder="Enter your username or email" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Password</label>
+                            <input type="password" id="login-password" name="password" class="form-input" placeholder="Enter your password" required>
+                        </div>
+                        <div id="login-error" class="text-red-400 text-sm hidden"></div>
+                        <button type="submit" class="w-full form-submit-btn">Sign In</button>
+                        <p class="text-center text-gray-400 text-sm">
+                            Don't have an account? 
+                            <button type="button" id="switch-to-signup" class="text-blue-400 hover:text-blue-300 font-semibold">Sign Up</button>
+                        </p>
+                    </form>
+                </div>
+            </div>
+        </main>
+
+        <!-- Signup Page -->
+        <main id="page-signup" class="page-content hidden">
+            <div class="auth-container">
+                <div class="auth-card">
+                    <h2 class="text-3xl font-bold text-white mb-2">Create Account</h2>
+                    <p class="text-gray-400 mb-6">Join IntelliWheels today</p>
+                    <form id="signup-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Username</label>
+                            <input type="text" id="signup-username" name="username" class="form-input" placeholder="Choose a username" required minlength="3">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Email</label>
+                            <input type="email" id="signup-email" name="email" class="form-input" placeholder="Enter your email" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Password</label>
+                            <input type="password" id="signup-password" name="password" class="form-input" placeholder="Create a password (min 6 characters)" required minlength="6">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Confirm Password</label>
+                            <input type="password" id="signup-password-confirm" name="password_confirm" class="form-input" placeholder="Confirm your password" required>
+                        </div>
+                        <div id="signup-error" class="text-red-400 text-sm hidden"></div>
+                        <button type="submit" class="w-full form-submit-btn">Create Account</button>
+                        <p class="text-center text-gray-400 text-sm">
+                            Already have an account? 
+                            <button type="button" id="switch-to-login" class="text-blue-400 hover:text-blue-300 font-semibold">Sign In</button>
+                        </p>
+                    </form>
+                </div>
+            </div>
+        </main>
+
+        <main id="page-listings" class="page-content hidden">
              <div class="filter-bar">
                 <input type="text" id="search-input" placeholder="Search by make or model..." class="filter-search">
                 <div class="filter-controls">

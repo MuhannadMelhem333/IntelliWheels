@@ -12,12 +12,25 @@ export const DOM = {
     },
     // Page Containers
     pages: {
+        login: document.getElementById('page-login'),
+        signup: document.getElementById('page-signup'),
         listings: document.getElementById('page-listings'),
         reviews: document.getElementById('page-reviews'),
         favorites: document.getElementById('page-favorites'),
         chatbot: document.getElementById('page-chatbot'),
         addListing: document.getElementById('page-add-listing'),
     },
+    // Auth Elements
+    navAuthSection: document.getElementById('nav-auth-section'),
+    navMainSection: document.getElementById('nav-main-section'),
+    userNameDisplay: document.getElementById('user-name-display'),
+    navLogout: document.getElementById('nav-logout'),
+    loginForm: document.getElementById('login-form'),
+    signupForm: document.getElementById('signup-form'),
+    switchToSignup: document.getElementById('switch-to-signup'),
+    switchToLogin: document.getElementById('switch-to-login'),
+    loginError: document.getElementById('login-error'),
+    signupError: document.getElementById('signup-error'),
     // Filter Controls
     searchInput: document.getElementById('search-input'),
     makeFilter: document.getElementById('make-filter'),
@@ -43,11 +56,15 @@ export const DOM = {
  * @param {string} pageId - The ID of the page to show.
  */
 export function showPage(pageId) {
-    Object.values(DOM.pages).forEach(page => page.classList.add('hidden'));
+    Object.values(DOM.pages).forEach(page => {
+        if (page) page.classList.add('hidden');
+    });
     if (DOM.pages[pageId]) {
         DOM.pages[pageId].classList.remove('hidden');
     }
-    Object.values(DOM.navButtons).forEach(btn => btn.classList.remove('active'));
+    Object.values(DOM.navButtons).forEach(btn => {
+        if (btn) btn.classList.remove('active');
+    });
     if (DOM.navButtons[pageId]) {
         DOM.navButtons[pageId].classList.add('active');
     }

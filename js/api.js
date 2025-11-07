@@ -5,6 +5,8 @@
 
 const API_BASE_URL = 'http://localhost:5000/api';
 const USER_SESSION = localStorage.getItem('userSession') || `session-${Date.now()}`;
+const AUTH_TOKEN_KEY = 'authToken';
+const USER_DATA_KEY = 'userData';
 
 // Initialize user session
 if (!localStorage.getItem('userSession')) {
@@ -12,18 +14,68 @@ if (!localStorage.getItem('userSession')) {
 }
 
 /**
- * Generic API request handler
+ * Get authentication token from localStorage
+ */
+export function getAuthToken() {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+/**
+ * Set authentication token
+ */
+export function setAuthToken(token) {
+    if (token) {
+        localStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+}
+
+/**
+ * Get user data from localStorage
+ */
+export function getUserData() {
+    const data = localStorage.getItem(USER_DATA_KEY);
+    return data ? JSON.parse(data) : null;
+}
+
+/**
+ * Set user data
+ */
+export function setUserData(user) {
+    if (user) {
+        localStorage.setItem(USER_DATA_KEY, JSON.stringify(user));
+    } else {
+        localStorage.removeItem(USER_DATA_KEY);
+    }
+}
+
+/**
+ * Generic API request handler with authentication
  */
 async function apiRequest(endpoint, options = {}) {
     try {
         const url = `${API_BASE_URL}${endpoint}`;
+        const token = getAuthToken();
+        
+        const headers = {
+            ...options.headers
+        };
+        
+        // Only set Content-Type for requests with a body
+        if (options.body) {
+            headers['Content-Type'] = 'application/json';
+        }
+        
+        // Add auth token if available
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+        
         console.log('API Request:', url, options.method || 'GET');
         
         const response = await fetch(url, {
-            headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
-            },
+            headers,
             ...options
         });
         
@@ -35,7 +87,22 @@ async function apiRequest(endpoint, options = {}) {
             } catch {
                 errorData = { error: errorText || `HTTP error! status: ${response.status}` };
             }
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+            
+            // Handle authentication errors
+            if (response.status === 401) {
+                // Clear auth data and redirect to login
+                setAuthToken(null);
+                setUserData(null);
+                if (window.location.pathname !== '/') {
+                    window.location.href = '/';
+                }
+            }
+            
+            // Return error response with proper structure
+            return {
+                success: false,
+                error: errorData.error || errorData.message || errorText || `HTTP error! status: ${response.status}`
+            };
         }
         
         const data = await response.json();
@@ -115,7 +182,7 @@ export async function getMakes() {
  * Get user's favorite cars
  */
 export async function getFavorites() {
-    return await apiRequest(`/favorites?session=${USER_SESSION}`);
+    return await apiRequest('/favorites');
 }
 
 /**
@@ -125,8 +192,7 @@ export async function addFavorite(carId) {
     return await apiRequest('/favorites', {
         method: 'POST',
         body: JSON.stringify({
-            car_id: carId,
-            session: USER_SESSION
+            car_id: carId
         })
     });
 }
@@ -135,7 +201,7 @@ export async function addFavorite(carId) {
  * Remove a car from favorites
  */
 export async function removeFavorite(carId) {
-    return await apiRequest(`/favorites/${carId}?session=${USER_SESSION}`, {
+    return await apiRequest(`/favorites/${carId}`, {
         method: 'DELETE'
     });
 }
@@ -204,4 +270,53 @@ export async function healthCheck() {
     } catch (error) {
         return { success: false, error: 'Backend not available' };
     }
+}
+
+/**
+ * User signup
+ */
+export async function signup(username, email, password) {
+    return await apiRequest('/auth/signup', {
+        method: 'POST',
+        body: JSON.stringify({
+            username,
+            email,
+            password
+        })
+    });
+}
+
+/**
+ * User login
+ */
+export async function login(username, password) {
+    return await apiRequest('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+            username,
+            password
+        })
+    });
+}
+
+/**
+ * User logout
+ */
+export async function logout() {
+    const token = getAuthToken();
+    if (token) {
+        await apiRequest('/auth/logout', {
+            method: 'POST',
+            body: JSON.stringify({ token })
+        });
+    }
+    setAuthToken(null);
+    setUserData(null);
+}
+
+/**
+ * Verify authentication session
+ */
+export async function verifyAuth() {
+    return await apiRequest('/auth/verify');
 }

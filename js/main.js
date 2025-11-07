@@ -28,7 +28,15 @@ import {
     addFavorite, 
     removeFavorite, 
     handleChatbotQuery,
-    healthCheck
+    healthCheck,
+    signup,
+    login,
+    logout,
+    verifyAuth,
+    getAuthToken,
+    setAuthToken,
+    getUserData,
+    setUserData
 } from './api.js';
 
 // --- STATE MANAGEMENT ---
@@ -42,6 +50,8 @@ let currentFilters = {
 };
 let isLoading = false;
 let conversationHistory = []; // Store conversation history for chatbot
+let isAuthenticated = false; // Authentication state
+let currentUser = null; // Current logged-in user
 
 // --- LOCALSTORAGE FUNCTIONS ---
 const Storage = {
@@ -305,6 +315,184 @@ async function handleDeleteCar(carId) {
     }
 }
 
+// --- AUTHENTICATION MANAGEMENT ---
+async function checkAuthentication() {
+    const token = getAuthToken();
+    if (!token) {
+        return false;
+    }
+    
+    try {
+        const response = await verifyAuth();
+        if (response.success && response.authenticated) {
+            isAuthenticated = true;
+            currentUser = response.user;
+            setUserData(response.user);
+            updateAuthUI();
+            return true;
+        } else {
+            setAuthToken(null);
+            setUserData(null);
+            isAuthenticated = false;
+            currentUser = null;
+            updateAuthUI();
+            return false;
+        }
+    } catch (error) {
+        console.error('Auth check failed:', error);
+        setAuthToken(null);
+        setUserData(null);
+        isAuthenticated = false;
+        currentUser = null;
+        updateAuthUI();
+        return false;
+    }
+}
+
+function updateAuthUI() {
+    if (isAuthenticated && currentUser) {
+        // Show main navigation, hide auth section
+        if (DOM.navMainSection) DOM.navMainSection.classList.remove('hidden');
+        if (DOM.navAuthSection) {
+            DOM.navAuthSection.classList.remove('hidden');
+            if (DOM.userNameDisplay) {
+                DOM.userNameDisplay.textContent = `Welcome, ${currentUser.username}`;
+                DOM.userNameDisplay.classList.remove('hidden');
+            }
+            if (DOM.navLogout) DOM.navLogout.classList.remove('hidden');
+        }
+    } else {
+        // Hide main navigation, show auth section
+        if (DOM.navMainSection) DOM.navMainSection.classList.add('hidden');
+        if (DOM.navAuthSection) {
+            if (DOM.userNameDisplay) DOM.userNameDisplay.classList.add('hidden');
+            if (DOM.navLogout) DOM.navLogout.classList.add('hidden');
+        }
+    }
+}
+
+async function handleLogin(event) {
+    event.preventDefault();
+    if (isLoading) return;
+    
+    const username = DOM.loginForm.querySelector('#login-username').value.trim();
+    const password = DOM.loginForm.querySelector('#login-password').value;
+    
+    if (!username || !password) {
+        showAuthError('login-error', 'Please fill in all fields');
+        return;
+    }
+    
+    isLoading = true;
+    hideAuthError('login-error');
+    
+    try {
+        const response = await login(username, password);
+        if (response.success) {
+            setAuthToken(response.token);
+            setUserData(response.user);
+            isAuthenticated = true;
+            currentUser = response.user;
+            updateAuthUI();
+            showSuccess('Login successful!');
+            showPage('listings');
+            await initApp();
+        } else {
+            showAuthError('login-error', response.error || 'Login failed');
+        }
+    } catch (error) {
+        showAuthError('login-error', error.message || 'Login failed');
+    } finally {
+        isLoading = false;
+    }
+}
+
+async function handleSignup(event) {
+    event.preventDefault();
+    if (isLoading) return;
+    
+    const username = DOM.signupForm.querySelector('#signup-username').value.trim();
+    const email = DOM.signupForm.querySelector('#signup-email').value.trim();
+    const password = DOM.signupForm.querySelector('#signup-password').value;
+    const passwordConfirm = DOM.signupForm.querySelector('#signup-password-confirm').value;
+    
+    if (!username || !email || !password || !passwordConfirm) {
+        showAuthError('signup-error', 'Please fill in all fields');
+        return;
+    }
+    
+    if (password !== passwordConfirm) {
+        showAuthError('signup-error', 'Passwords do not match');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showAuthError('signup-error', 'Password must be at least 6 characters');
+        return;
+    }
+    
+    isLoading = true;
+    hideAuthError('signup-error');
+    
+    try {
+        const response = await signup(username, email, password);
+        if (response.success) {
+            setAuthToken(response.token);
+            setUserData(response.user);
+            isAuthenticated = true;
+            currentUser = response.user;
+            updateAuthUI();
+            showSuccess('Account created successfully!');
+            showPage('listings');
+            await initApp();
+        } else {
+            showAuthError('signup-error', response.error || 'Signup failed');
+        }
+    } catch (error) {
+        showAuthError('signup-error', error.message || 'Signup failed');
+    } finally {
+        isLoading = false;
+    }
+}
+
+async function handleLogout() {
+    try {
+        await logout();
+        isAuthenticated = false;
+        currentUser = null;
+        updateAuthUI();
+        showPage('login');
+        showSuccess('Logged out successfully');
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+}
+
+function showAuthError(elementId, message) {
+    const errorEl = document.getElementById(elementId);
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+        errorEl.classList.add('show');
+    }
+}
+
+function hideAuthError(elementId) {
+    const errorEl = document.getElementById(elementId);
+    if (errorEl) {
+        errorEl.classList.add('hidden');
+        errorEl.classList.remove('show');
+    }
+}
+
+function requireAuth() {
+    if (!isAuthenticated) {
+        showPage('login');
+        return false;
+    }
+    return true;
+}
+
 // --- CHATBOT HANDLING ---
 async function handleChatSubmit(event) {
     // Prevent any default form submission behavior
@@ -312,6 +500,8 @@ async function handleChatSubmit(event) {
         event.preventDefault();
         event.stopPropagation();
     }
+    
+    if (!requireAuth()) return;
     
     const message = DOM.chatbotInput?.value?.trim();
     if (!message || isLoading || !DOM.chatbotInput) return;
@@ -335,11 +525,24 @@ async function handleChatSubmit(event) {
         const response = await handleChatbotQuery(message, GEMINI_API_KEY, conversationHistory);
         hideTypingIndicator();
         
-        if (!response.success || response.response.startsWith('Error:')) {
-            appendMessage(response.response || "I'm sorry, I couldn't generate a response.", 'bot');
-            if (response.error) {
-                showError(null, response.response);
+        if (!response.success) {
+            // Handle error responses
+            let errorMessage = response.error || response.response || "I'm sorry, I couldn't generate a response.";
+            
+            // Check for quota exceeded error
+            if (errorMessage.includes('quota') || errorMessage.includes('quota exceeded')) {
+                errorMessage = "⚠️ API Quota Exceeded\n\nThe Gemini API quota has been exceeded. Please:\n\n• Wait a few minutes and try again\n• Check your API key usage limits\n• Consider upgrading your API plan if needed\n\nYou can still browse the car listings and use other features.";
+            } else if (errorMessage.includes('API key') || errorMessage.includes('authentication')) {
+                errorMessage = "⚠️ API Key Error\n\nThere's an issue with the API key. Please check your Gemini API key configuration.";
+            } else if (errorMessage.includes('safety') || errorMessage.includes('blocked')) {
+                errorMessage = "⚠️ Content Blocked\n\nYour query was blocked by safety filters. Please try rephrasing your question.";
             }
+            
+            appendMessage(errorMessage, 'bot');
+            showError(null, errorMessage);
+        } else if (response.response && response.response.startsWith('Error:')) {
+            appendMessage(response.response, 'bot');
+            showError(null, response.response);
         } else {
             // Display bot response
             appendMessage(response.response, 'bot', response.relevant_car_ids);
@@ -385,33 +588,84 @@ async function renderReviewsPage() {
 
 // --- EVENT LISTENERS ---
 function setupEventListeners() {
+    // Authentication
+    if (DOM.loginForm) {
+        DOM.loginForm.addEventListener('submit', handleLogin);
+    }
+    if (DOM.signupForm) {
+        DOM.signupForm.addEventListener('submit', handleSignup);
+    }
+    if (DOM.switchToSignup) {
+        DOM.switchToSignup.addEventListener('click', () => showPage('signup'));
+    }
+    if (DOM.switchToLogin) {
+        DOM.switchToLogin.addEventListener('click', () => showPage('login'));
+    }
+    if (DOM.navLogout) {
+        DOM.navLogout.addEventListener('click', handleLogout);
+    }
+    
     // Logo Button
-    DOM.logoBtn.addEventListener('click', () => {
-        applyFiltersAndRender();
-        showPage('listings');
-    });
+    if (DOM.logoBtn) {
+        DOM.logoBtn.addEventListener('click', () => {
+            if (isAuthenticated) {
+                applyFiltersAndRender();
+                showPage('listings');
+            } else {
+                showPage('login');
+            }
+        });
+    }
 
-    // Navigation
-    DOM.navButtons.listings.addEventListener('click', async () => {
-        showPage('listings');
-        await applyFiltersAndRender();
-    });
+    // Navigation (only if authenticated)
+    if (DOM.navButtons.listings) {
+        DOM.navButtons.listings.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('listings');
+            await applyFiltersAndRender();
+        });
+    }
     
-    DOM.navButtons.reviews.addEventListener('click', async () => {
-        showPage('reviews');
-        await renderReviewsPage();
-    });
+    if (DOM.navButtons.reviews) {
+        DOM.navButtons.reviews.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('reviews');
+            await renderReviewsPage();
+        });
+    }
     
-    DOM.navButtons.favorites.addEventListener('click', async () => {
-        showPage('favorites');
-        await renderFavoritesPage();
-    });
+    if (DOM.navButtons.favorites) {
+        DOM.navButtons.favorites.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('favorites');
+            await renderFavoritesPage();
+        });
+    }
     
-    DOM.navButtons.chatbot.addEventListener('click', () => showPage('chatbot'));
-    DOM.navButtons.addListing.addEventListener('click', () => showPage('addListing'));
+    if (DOM.navButtons.chatbot) {
+        DOM.navButtons.chatbot.addEventListener('click', () => {
+            if (!requireAuth()) return;
+            showPage('chatbot');
+        });
+    }
+    
+    if (DOM.navButtons.addListing) {
+        DOM.navButtons.addListing.addEventListener('click', () => {
+            if (!requireAuth()) return;
+            showPage('addListing');
+        });
+    }
 
     // Form Submission
-    DOM.addListingForm.addEventListener('submit', handleAddListing);
+    if (DOM.addListingForm) {
+        DOM.addListingForm.addEventListener('submit', (e) => {
+            if (!requireAuth()) {
+                e.preventDefault();
+                return;
+            }
+            handleAddListing(e);
+        });
+    }
 
     // Event Delegation for Favorite, Details, Edit, Delete Buttons
     document.body.addEventListener('click', async (event) => {
@@ -525,40 +779,7 @@ function debounce(func, wait) {
 }
 
 // --- INITIALIZATION ---
-async function init() {
-    console.log('🚀 IntelliWheels Initializing...');
-    
-    // Wait for DOM to be fully ready
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-        return;
-    }
-    
-    // Check if DOM elements exist
-    if (!DOM.listingsContainer || !DOM.searchInput || !DOM.makeFilter) {
-        console.error('DOM elements not found!');
-        setTimeout(init, 100);
-        return;
-    }
-    
-    // Setup event listeners first
-    setupEventListeners();
-    showPage('listings');
-    createParticles();
-    
-    // Check backend health
-    try {
-        const health = await healthCheck();
-        if (!health.success) {
-            console.warn('Backend not available:', health.error);
-            showError(null, '⚠️ Backend server not available. Please start the Flask server (python app.py)');
-        } else {
-            console.log('✅ Backend is healthy');
-        }
-    } catch (error) {
-        console.warn('Health check failed:', error);
-    }
-    
+async function initApp() {
     // Load favorites
     try {
         favorites = await fetchFavorites();
@@ -592,8 +813,59 @@ async function init() {
         console.error('Failed to load cars:', error);
         showError(DOM.listingsContainer, `Failed to load cars: ${error.message}`);
     }
+}
+
+async function init() {
+    console.log('🚀 IntelliWheels Initializing...');
     
-    console.log('✅ IntelliWheels Ready!');
+    // Wait for DOM to be fully ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+        return;
+    }
+    
+    // Check if DOM elements exist
+    if (!DOM.listingsContainer || !DOM.searchInput || !DOM.makeFilter) {
+        console.error('DOM elements not found!');
+        setTimeout(init, 100);
+        return;
+    }
+    
+    // Setup event listeners first
+    setupEventListeners();
+    createParticles();
+    
+    // Check authentication first
+    const authenticated = await checkAuthentication();
+    
+    if (authenticated) {
+        // User is authenticated, show main app
+        updateAuthUI();
+        showPage('listings');
+        
+        // Check backend health
+        try {
+            const health = await healthCheck();
+            if (!health.success) {
+                console.warn('Backend not available:', health.error);
+                showError(null, '⚠️ Backend server not available. Please start the Flask server (python app.py)');
+            } else {
+                console.log('✅ Backend is healthy');
+            }
+        } catch (error) {
+            console.warn('Health check failed:', error);
+        }
+        
+        // Initialize app data
+        await initApp();
+        
+        console.log('✅ IntelliWheels Ready!');
+    } else {
+        // User not authenticated, show login page
+        updateAuthUI();
+        showPage('login');
+        console.log('🔒 Please login to access IntelliWheels');
+    }
 }
 
 // Start initialization

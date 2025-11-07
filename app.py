@@ -10,6 +10,8 @@ import os
 from datetime import datetime
 from functools import wraps
 import re
+import hashlib
+import secrets
 
 try:
     import requests
@@ -26,6 +28,9 @@ DB_PATH = 'intelliwheels.db'
 
 # In-memory conversation store per session
 CHAT_SESSIONS = {}
+
+# In-memory session store for authentication
+AUTH_SESSIONS = {}  # {token: {user_id, username, created_at}}
 
 # Initialize database
 def init_db():
@@ -71,45 +76,45 @@ def init_db():
         CREATE TABLE IF NOT EXISTS favorites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             car_id INTEGER NOT NULL,
-            user_session TEXT,
+            user_id INTEGER NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(car_id, user_session)
+            UNIQUE(car_id, user_id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
     
-    # Chat sessions table
+    # Users table for authentication
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_sessions (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL UNIQUE,
-            user_session TEXT,
-            title TEXT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_login TIMESTAMP
         )
     ''')
     
-    # Chat messages table
+    # User sessions table for persistent sessions
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_messages (
+        CREATE TABLE IF NOT EXISTS user_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
+            expires_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
     
-    # Create index for faster queries
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_chat_messages_session 
-        ON chat_messages(session_id, created_at)
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_token 
+        ON user_sessions(token)
     ''')
     
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_chat_sessions_user 
-        ON chat_sessions(user_session, updated_at)
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user 
+        ON user_sessions(user_id)
     ''')
     
     conn.commit()
@@ -146,9 +151,306 @@ def car_row_to_dict(row):
         'source_sheets': json.loads(row['source_sheets']) if row['source_sheets'] else []
     }
 
+# Authentication helper functions
+def hash_password(password):
+    """Hash a password using SHA-256"""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password, password_hash):
+    """Verify a password against its hash"""
+    return hash_password(password) == password_hash
+
+def generate_token():
+    """Generate a secure random token"""
+    return secrets.token_urlsafe(32)
+
+def get_user_from_token(token):
+    """Get user info from token"""
+    if not token:
+        return None
+    
+    # Check in-memory sessions first
+    if token in AUTH_SESSIONS:
+        return AUTH_SESSIONS[token]
+    
+    # Check database sessions
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT u.id, u.username, u.email, us.token
+        FROM users u
+        INNER JOIN user_sessions us ON u.id = us.user_id
+        WHERE us.token = ? AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+    ''', (token,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        user_info = {
+            'user_id': row[0],
+            'username': row[1],
+            'email': row[2]
+        }
+        AUTH_SESSIONS[token] = user_info
+        return user_info
+    
+    return None
+
+def require_auth(f):
+    """Decorator to require authentication"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = None
+        
+        # Try Authorization header first
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+        
+        # Try query parameter
+        if not token:
+            token = request.args.get('token')
+        
+        # Try JSON body (but don't fail if it's empty)
+        if not token:
+            if request.is_json:
+                data = request.get_json(silent=True)
+                if data:
+                    token = data.get('token')
+        
+        user = get_user_from_token(token)
+        if not user:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+        
+        # Add user info to request context
+        request.current_user = user
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Authentication API Routes
+
+@app.route('/api/auth/signup', methods=['POST'])
+def signup():
+    """User registration endpoint"""
+    try:
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        
+        # Validation
+        if not username or len(username) < 3:
+            return jsonify({'success': False, 'error': 'Username must be at least 3 characters'}), 400
+        
+        if not email or '@' not in email:
+            return jsonify({'success': False, 'error': 'Valid email is required'}), 400
+        
+        if not password or len(password) < 6:
+            return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if username or email already exists
+        cursor.execute('SELECT id FROM users WHERE username = ? OR email = ?', (username, email))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({'success': False, 'error': 'Username or email already exists'}), 400
+        
+        # Create user
+        password_hash = hash_password(password)
+        cursor.execute('''
+            INSERT INTO users (username, email, password_hash)
+            VALUES (?, ?, ?)
+        ''', (username, email, password_hash))
+        
+        user_id = cursor.lastrowid
+        
+        # Create session token
+        token = generate_token()
+        cursor.execute('''
+            INSERT INTO user_sessions (user_id, token, expires_at)
+            VALUES (?, ?, datetime('now', '+30 days'))
+        ''', (user_id, token))
+        
+        conn.commit()
+        conn.close()
+        
+        # Store in memory
+        AUTH_SESSIONS[token] = {
+            'user_id': user_id,
+            'username': username,
+            'email': email
+        }
+        
+        return jsonify({
+            'success': True,
+            'message': 'Account created successfully',
+            'token': token,
+            'user': {
+                'id': user_id,
+                'username': username,
+                'email': email
+            }
+        }), 201
+        
+    except sqlite3.IntegrityError:
+        return jsonify({'success': False, 'error': 'Username or email already exists'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """User login endpoint"""
+    try:
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        username_or_email = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username_or_email or not password:
+            return jsonify({'success': False, 'error': 'Username/email and password are required'}), 400
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Find user by username or email
+        cursor.execute('''
+            SELECT id, username, email, password_hash
+            FROM users
+            WHERE username = ? OR email = ?
+        ''', (username_or_email, username_or_email.lower()))
+        
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+        
+        user_id, username, email, password_hash = row
+        
+        # Verify password
+        if not verify_password(password, password_hash):
+            conn.close()
+            return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+        
+        # Update last login
+        cursor.execute('''
+            UPDATE users SET last_login = datetime('now') WHERE id = ?
+        ''', (user_id,))
+        
+        # Create new session token
+        token = generate_token()
+        cursor.execute('''
+            INSERT INTO user_sessions (user_id, token, expires_at)
+            VALUES (?, ?, datetime('now', '+30 days'))
+        ''', (user_id, token))
+        
+        conn.commit()
+        conn.close()
+        
+        # Store in memory
+        AUTH_SESSIONS[token] = {
+            'user_id': user_id,
+            'username': username,
+            'email': email
+        }
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'token': token,
+            'user': {
+                'id': user_id,
+                'username': username,
+                'email': email
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """User logout endpoint"""
+    try:
+        # Token can come from header, query param, or body
+        token = None
+        
+        # Try Authorization header first
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+        
+        # Try query parameter
+        if not token:
+            token = request.args.get('token')
+        
+        # Try JSON body (but don't fail if it's empty)
+        if not token:
+            if request.is_json:
+                data = request.get_json(silent=True)
+                if data:
+                    token = data.get('token')
+        
+        if token:
+            # Remove from memory
+            AUTH_SESSIONS.pop(token, None)
+            
+            # Remove from database
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_sessions WHERE token = ?', (token,))
+            conn.commit()
+            conn.close()
+        
+        return jsonify({'success': True, 'message': 'Logged out successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/auth/verify', methods=['GET'])
+def verify_session():
+    """Verify if user session is valid"""
+    try:
+        token = request.headers.get('Authorization') or request.args.get('token')
+        if token and token.startswith('Bearer '):
+            token = token[7:]
+        
+        user = get_user_from_token(token)
+        if user:
+            return jsonify({
+                'success': True,
+                'authenticated': True,
+                'user': {
+                    'id': user['user_id'],
+                    'username': user['username'],
+                    'email': user['email']
+                }
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'authenticated': False
+            })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # API Routes
 
 @app.route('/api/cars', methods=['GET'])
+@require_auth
 def get_cars():
     """Get all cars with optional filtering and sorting"""
     try:
@@ -222,6 +524,7 @@ def get_cars():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/cars/<int:car_id>', methods=['GET'])
+@require_auth
 def get_car(car_id):
     """Get a single car by ID"""
     try:
@@ -239,10 +542,18 @@ def get_car(car_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/cars', methods=['POST'])
+@require_auth
 def create_car():
     """Create a new car listing"""
     try:
-        data = request.json
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
         conn = get_db()
         cursor = conn.cursor()
         
@@ -286,10 +597,18 @@ def create_car():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/cars/<int:car_id>', methods=['PATCH'])
+@require_auth
 def update_car(car_id):
     """Update an existing car"""
     try:
-        data = request.json
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
         conn = get_db()
         cursor = conn.cursor()
         
@@ -336,6 +655,7 @@ def update_car(car_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/cars/<int:car_id>', methods=['DELETE'])
+@require_auth
 def delete_car(car_id):
     """Delete a car"""
     try:
@@ -362,6 +682,7 @@ def delete_car(car_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/makes', methods=['GET'])
+@require_auth
 def get_makes():
     """Get all unique car makes"""
     try:
@@ -375,19 +696,20 @@ def get_makes():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/favorites', methods=['GET'])
+@require_auth
 def get_favorites():
     """Get user's favorite cars"""
     try:
-        user_session = request.args.get('session', 'default')
+        user_id = request.current_user['user_id']
         conn = get_db()
         cursor = conn.cursor()
         
         cursor.execute('''
             SELECT c.* FROM cars c
             INNER JOIN favorites f ON c.id = f.car_id
-            WHERE f.user_session = ?
+            WHERE f.user_id = ?
             ORDER BY f.created_at DESC
-        ''', (user_session,))
+        ''', (user_id,))
         
         rows = cursor.fetchall()
         cars = [car_row_to_dict(row) for row in rows]
@@ -398,12 +720,20 @@ def get_favorites():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/favorites', methods=['POST'])
+@require_auth
 def add_favorite():
     """Add a car to favorites"""
     try:
-        data = request.json
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
         car_id = data.get('car_id')
-        user_session = data.get('session', 'default')
+        user_id = request.current_user['user_id']
         
         if not car_id:
             return jsonify({'success': False, 'error': 'car_id is required'}), 400
@@ -413,9 +743,9 @@ def add_favorite():
         
         try:
             cursor.execute('''
-                INSERT INTO favorites (car_id, user_session)
+                INSERT INTO favorites (car_id, user_id)
                 VALUES (?, ?)
-            ''', (car_id, user_session))
+            ''', (car_id, user_id))
             conn.commit()
             conn.close()
             return jsonify({'success': True, 'message': 'Added to favorites'})
@@ -426,17 +756,18 @@ def add_favorite():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/favorites/<int:car_id>', methods=['DELETE'])
+@require_auth
 def remove_favorite(car_id):
     """Remove a car from favorites"""
     try:
-        user_session = request.args.get('session', 'default')
+        user_id = request.current_user['user_id']
         conn = get_db()
         cursor = conn.cursor()
         
         cursor.execute('''
             DELETE FROM favorites
-            WHERE car_id = ? AND user_session = ?
-        ''', (car_id, user_session))
+            WHERE car_id = ? AND user_id = ?
+        ''', (car_id, user_id))
         
         conn.commit()
         conn.close()
@@ -591,6 +922,7 @@ def query_cars_intelligently(query, intent, detected_currency=None):
         return []
 
 @app.route('/api/chatbot', methods=['POST'])
+@require_auth
 def chatbot():
     """Enhanced AI Chatbot endpoint with negotiation capabilities and intelligent database querying"""
     if not REQUESTS_AVAILABLE:
@@ -600,7 +932,14 @@ def chatbot():
         }), 500
     
     try:
-        data = request.json
+        # Check if request has JSON data
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
         query = data.get('query', '')
         api_key = data.get('api_key') or os.getenv('GEMINI_API_KEY')
         history = data.get('history', [])  # Client-provided conversation history
