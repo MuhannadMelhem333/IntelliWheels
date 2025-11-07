@@ -372,13 +372,22 @@ function updateAuthUI() {
 }
 
 async function handleLogin(event) {
+    console.log('handleLogin called!', event);
     event.preventDefault();
-    if (isLoading) return;
+    event.stopPropagation();
+    
+    if (isLoading) {
+        console.log('Already loading, ignoring...');
+        return;
+    }
     
     const username = DOM.loginForm.querySelector('#login-username').value.trim();
     const password = DOM.loginForm.querySelector('#login-password').value;
     
+    console.log('Login attempt:', { username, passwordLength: password.length });
+    
     if (!username || !password) {
+        console.log('Validation failed: missing fields');
         showAuthError('login-error', 'Please fill in all fields');
         return;
     }
@@ -386,8 +395,19 @@ async function handleLogin(event) {
     isLoading = true;
     hideAuthError('login-error');
     
+    // Show loading state
+    const submitBtn = DOM.loginForm.querySelector('button[type="submit"]');
+    const originalText = submitBtn?.textContent;
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Logging in...';
+    }
+    
     try {
+        console.log('Attempting login for:', username);
         const response = await login(username, password);
+        console.log('Login response:', response);
+        
         if (response.success) {
             setAuthToken(response.token);
             setUserData(response.user);
@@ -398,12 +418,25 @@ async function handleLogin(event) {
             showPage('listings');
             await initApp();
         } else {
-            showAuthError('login-error', response.error || 'Login failed');
+            const errorMsg = response.error || 'Login failed';
+            console.error('Login failed:', errorMsg);
+            showAuthError('login-error', errorMsg);
         }
     } catch (error) {
-        showAuthError('login-error', error.message || 'Login failed');
+        console.error('Login error:', error);
+        const errorMsg = error.message || 'Login failed. Please check if the backend server is running.';
+        showAuthError('login-error', errorMsg);
+        
+        // Check if it's a network error
+        if (error.message && error.message.includes('fetch')) {
+            showAuthError('login-error', 'Cannot connect to server. Make sure Flask backend is running (python app.py)');
+        }
     } finally {
         isLoading = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText || 'Login';
+        }
     }
 }
 
@@ -434,8 +467,19 @@ async function handleSignup(event) {
     isLoading = true;
     hideAuthError('signup-error');
     
+    // Show loading state
+    const submitBtn = DOM.signupForm.querySelector('button[type="submit"]');
+    const originalText = submitBtn?.textContent;
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating account...';
+    }
+    
     try {
+        console.log('Attempting signup for:', username, email);
         const response = await signup(username, email, password);
+        console.log('Signup response:', response);
+        
         if (response.success) {
             setAuthToken(response.token);
             setUserData(response.user);
@@ -446,12 +490,25 @@ async function handleSignup(event) {
             showPage('listings');
             await initApp();
         } else {
-            showAuthError('signup-error', response.error || 'Signup failed');
+            const errorMsg = response.error || 'Signup failed';
+            console.error('Signup failed:', errorMsg);
+            showAuthError('signup-error', errorMsg);
         }
     } catch (error) {
-        showAuthError('signup-error', error.message || 'Signup failed');
+        console.error('Signup error:', error);
+        const errorMsg = error.message || 'Signup failed. Please check if the backend server is running.';
+        showAuthError('signup-error', errorMsg);
+        
+        // Check if it's a network error
+        if (error.message && error.message.includes('fetch')) {
+            showAuthError('signup-error', 'Cannot connect to server. Make sure Flask backend is running (python app.py)');
+        }
     } finally {
         isLoading = false;
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText || 'Sign Up';
+        }
     }
 }
 
@@ -588,13 +645,25 @@ async function renderReviewsPage() {
 
 // --- EVENT LISTENERS ---
 function setupEventListeners() {
+    console.log('Setting up event listeners...');
+    console.log('DOM.loginForm:', DOM.loginForm);
+    console.log('DOM.signupForm:', DOM.signupForm);
+    
     // Authentication
     if (DOM.loginForm) {
+        console.log('Adding login form listener');
         DOM.loginForm.addEventListener('submit', handleLogin);
+    } else {
+        console.error('DOM.loginForm is null! Form not found.');
     }
+    
     if (DOM.signupForm) {
+        console.log('Adding signup form listener');
         DOM.signupForm.addEventListener('submit', handleSignup);
+    } else {
+        console.error('DOM.signupForm is null! Form not found.');
     }
+    
     if (DOM.switchToSignup) {
         DOM.switchToSignup.addEventListener('click', () => showPage('signup'));
     }
@@ -820,18 +889,29 @@ async function init() {
     
     // Wait for DOM to be fully ready
     if (document.readyState === 'loading') {
+        console.log('DOM still loading, waiting...');
         document.addEventListener('DOMContentLoaded', init);
         return;
     }
     
+    console.log('DOM is ready, checking elements...');
+    
     // Check if DOM elements exist
+    console.log('Checking DOM elements:');
+    console.log('- listingsContainer:', DOM.listingsContainer);
+    console.log('- searchInput:', DOM.searchInput);
+    console.log('- makeFilter:', DOM.makeFilter);
+    console.log('- loginForm:', DOM.loginForm);
+    console.log('- signupForm:', DOM.signupForm);
+    
     if (!DOM.listingsContainer || !DOM.searchInput || !DOM.makeFilter) {
-        console.error('DOM elements not found!');
+        console.error('Some DOM elements not found! Retrying...');
         setTimeout(init, 100);
         return;
     }
     
     // Setup event listeners first
+    console.log('Setting up event listeners...');
     setupEventListeners();
     createParticles();
     
@@ -868,9 +948,15 @@ async function init() {
     }
 }
 
+// Make functions available globally
+window.showCarInfoModal = showCarInfoModal;
+window.showPage = showPage;
+
 // Start initialization
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    console.log('Document ready, starting init...');
     setTimeout(init, 0);
 } else {
+    console.log('Waiting for DOMContentLoaded...');
     document.addEventListener('DOMContentLoaded', init);
 }

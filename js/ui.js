@@ -53,54 +53,46 @@ export const DOM = {
 
 /**
  * Shows a specific page and hides others, updates nav button state.
- * Enhanced with smooth animations and transitions.
+ * Optimized for performance - minimal animations.
  * @param {string} pageId - The ID of the page to show.
  */
 export function showPage(pageId) {
-    // Hide all pages with fade out animation
+    // Hide all pages immediately (no animation delay for better performance)
     Object.values(DOM.pages).forEach(page => {
-        if (page && !page.classList.contains('hidden')) {
-            page.style.opacity = '0';
-            page.style.transform = 'translateY(20px)';
-            setTimeout(() => {
-                page.classList.add('hidden');
-            }, 200);
-        } else if (page) {
+        if (page) {
             page.classList.add('hidden');
+            page.style.opacity = '0';
         }
     });
     
-    // Show target page with fade in animation
+    // Show target page
     if (DOM.pages[pageId]) {
         DOM.pages[pageId].classList.remove('hidden');
-        // Trigger reflow for animation
-        DOM.pages[pageId].offsetHeight;
-        DOM.pages[pageId].style.opacity = '0';
-        DOM.pages[pageId].style.transform = 'translateY(20px)';
-        DOM.pages[pageId].style.transition = 'opacity 0.4s ease, transform 0.4s ease';
-        
-        setTimeout(() => {
+        // Use requestAnimationFrame for smooth transition
+        requestAnimationFrame(() => {
             DOM.pages[pageId].style.opacity = '1';
             DOM.pages[pageId].style.transform = 'translateY(0)';
-        }, 50);
+        });
     }
     
-    // Update nav buttons with smooth transitions
+    // Update nav button states
     Object.values(DOM.navButtons).forEach(btn => {
         if (btn) {
             btn.classList.remove('active');
-            btn.style.transform = 'scale(1)';
         }
     });
     
-    if (DOM.navButtons[pageId]) {
-        setTimeout(() => {
-            DOM.navButtons[pageId].classList.add('active');
-            DOM.navButtons[pageId].style.transform = 'scale(1.05)';
-            setTimeout(() => {
-                DOM.navButtons[pageId].style.transform = 'scale(1)';
-            }, 200);
-        }, 100);
+    // Set active state for current page button
+    const buttonMap = {
+        'listings': DOM.navButtons.listings,
+        'reviews': DOM.navButtons.reviews,
+        'favorites': DOM.navButtons.favorites,
+        'chatbot': DOM.navButtons.chatbot,
+        'addListing': DOM.navButtons.addListing
+    };
+    
+    if (buttonMap[pageId]) {
+        buttonMap[pageId]?.classList.add('active');
     }
 }
 
@@ -204,40 +196,26 @@ export function renderCarList(carList, container, favorites = []) {
         return;
     }
     
-    container.innerHTML = '';
-    
     if (!carList || carList.length === 0) {
         container.innerHTML = `<p class="text-gray-400 text-center text-lg py-8">No cars found.</p>`;
         return;
     }
     
-    console.log(`Rendering ${carList.length} cars to container`);
+    // Use DocumentFragment for better performance
+    const fragment = document.createDocumentFragment();
     
     carList.forEach((car, index) => {
         try {
             const card = createCarListItem(car, favorites);
             if (card) {
-                // Staggered animation delay
+                // Minimal animation for better performance
                 card.style.opacity = '0';
-                card.style.transform = 'translateY(30px) scale(0.95)';
-                card.style.transition = `opacity 0.5s ease ${index * 0.05}s, transform 0.5s cubic-bezier(0.4, 0, 0.2, 1) ${index * 0.05}s`;
+                fragment.appendChild(card);
                 
-                container.appendChild(card);
-                
-                // Trigger animation
-                setTimeout(() => {
-                    card.classList.add('is-visible');
+                // Trigger animation with requestAnimationFrame
+                requestAnimationFrame(() => {
+                    card.style.transition = 'opacity 0.3s ease';
                     card.style.opacity = '1';
-                    card.style.transform = 'translateY(0) scale(1)';
-                }, 50);
-                
-                // Add hover interactions
-                card.addEventListener('mouseenter', () => {
-                    card.style.transform = 'translateY(-8px) scale(1.02)';
-                });
-                
-                card.addEventListener('mouseleave', () => {
-                    card.style.transform = 'translateY(0) scale(1)';
                 });
             }
         } catch (error) {
@@ -245,7 +223,9 @@ export function renderCarList(carList, container, favorites = []) {
         }
     });
     
-    setupScrollAnimations();
+    // Clear and append in one operation
+    container.innerHTML = '';
+    container.appendChild(fragment);
 }
 
 /**

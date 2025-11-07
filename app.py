@@ -55,6 +55,8 @@ def init_db():
             engines TEXT,
             statistics TEXT,
             source_sheets TEXT,
+            latitude REAL,
+            longitude REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -129,6 +131,13 @@ def get_db():
 
 def car_row_to_dict(row):
     """Convert database row to dictionary"""
+    # Handle sqlite3.Row which doesn't have .get() method
+    def get_value(key, default=None):
+        try:
+            return row[key] if key in row.keys() else default
+        except (KeyError, TypeError):
+            return default
+    
     return {
         'id': row['id'],
         'make': row['make'],
@@ -148,7 +157,9 @@ def car_row_to_dict(row):
         },
         'engines': json.loads(row['engines']) if row['engines'] else [],
         'statistics': json.loads(row['statistics']) if row['statistics'] else {},
-        'source_sheets': json.loads(row['source_sheets']) if row['source_sheets'] else []
+        'source_sheets': json.loads(row['source_sheets']) if row['source_sheets'] else [],
+        'latitude': get_value('latitude'),
+        'longitude': get_value('longitude')
     }
 
 # Authentication helper functions
@@ -957,7 +968,7 @@ def chatbot():
         # Merge with server-side session history
         server_history = CHAT_SESSIONS.get(session_id, [])
         combined_history = server_history + history if history else server_history
-        
+
         # Limit combined history to last 15 messages to maintain context
         if len(combined_history) > 15:
             combined_history = combined_history[-15:]
@@ -1008,7 +1019,7 @@ def chatbot():
         # Always ensure we have cars to show - if no matches, get diverse sample
         conn = get_db()
         cursor = conn.cursor()
-        
+
         # Check total cars in database
         cursor.execute("SELECT COUNT(*) FROM cars")
         total_cars = cursor.fetchone()[0]
@@ -1066,7 +1077,7 @@ def chatbot():
                     'engines': json.loads(row[9]) if row[9] else [],
                     'statistics': json.loads(row[10]) if row[10] else {}
                 })
-        
+
         conn.close()
 
         # Build comprehensive car context

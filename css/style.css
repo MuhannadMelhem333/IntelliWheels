@@ -606,7 +606,7 @@ nav:hover {
 
 /* --- Form Inputs (Futuristic) --- */
 .form-input {
-    width: 100%;
+        width: 100%;
     padding: 0.875rem 1.25rem;
     background: rgba(15, 20, 25, 0.6);
     border: 1px solid var(--glass-border);
@@ -637,7 +637,7 @@ nav:hover {
 }
 
 .form-submit-btn {
-    width: 100%;
+        width: 100%;
     padding: 1rem 1.5rem;
     background: linear-gradient(135deg, var(--neon-blue), var(--neon-purple));
     color: var(--text-primary);
@@ -681,7 +681,7 @@ nav:hover {
 }
 
 /* --- Chatbot UI (Ultra-Modern) --- */
-.chatbot-fullscreen-container {
+    .chatbot-fullscreen-container {
     height: 78vh;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-lg);
@@ -1062,7 +1062,7 @@ nav:hover {
     }
     
     .filter-bar {
-        flex-direction: column;
+    flex-direction: column;
     }
     
     .filter-controls {
