@@ -52,9 +52,14 @@ function initializeDOM() {
         chatbotInput: document.getElementById('chatbot-input-fullscreen'),
         chatbotSendBtn: document.getElementById('chatbot-send-btn-fullscreen'),
         // Listing Assistant UI
-        listingAssistantLog: document.getElementById('listing-assistant-log'),
+        listingAssistantConversation: document.getElementById('listing-assistant-conversation'),
         listingAssistantInput: document.getElementById('listing-assistant-input'),
         listingAssistantSendBtn: document.getElementById('listing-assistant-send-btn'),
+        listingAssistantNewChatBtn: document.getElementById('listing-assistant-new-chat-btn'),
+        listingAssistantChatList: document.getElementById('listing-assistant-chat-list'),
+        // Chatbot New Chat Button
+        chatbotNewChatBtn: document.getElementById('chatbot-new-chat-btn'),
+        chatbotChatList: document.getElementById('chatbot-chat-list'),
         // Car Details Modal
         carInfoModal: document.getElementById('car-info-modal'),
         carInfoContent: document.getElementById('car-info-content'),
@@ -385,23 +390,6 @@ export function createParticles() {
         bg.appendChild(particle);
     }
     
-    // Also create particles for listing assistant
-    const listingBg = document.getElementById('listing-assistant-animation-bg');
-    if (listingBg) {
-        for (let i = 0; i < particleCount; i++) {
-            const particle = document.createElement('div');
-            particle.className = 'particle';
-            const size = Math.random() * 150 + 50;
-            particle.style.width = `${size}px`;
-            particle.style.height = `${size}px`;
-            particle.style.left = `${Math.random() * 100}%`;
-            particle.style.bottom = `0px`;
-            particle.style.animationDuration = `${Math.random() * 20 + 10}s`;
-            particle.style.animationDelay = `${Math.random() * 10}s`;
-            particle.style.opacity = Math.random() * 0.5 + 0.1;
-            listingBg.appendChild(particle);
-        }
-    }
 }
 
 /**
@@ -412,14 +400,20 @@ export function createParticles() {
  * @param {string} actionType - Optional action type (create_listing, update_listing)
  */
 export function appendListingAssistantMessage(message, sender, listingData = null, actionType = null) {
-    if (!DOM.listingAssistantLog) {
-        console.warn('Listing assistant log container not found');
+    if (!DOM.listingAssistantConversation) {
+        console.warn('Listing assistant conversation container not found');
         return;
+    }
+    
+    // Remove welcome card if it exists
+    const welcomeCard = DOM.listingAssistantConversation.querySelector('.listing-welcome-card');
+    if (welcomeCard) {
+        welcomeCard.remove();
     }
     
     const messageEl = document.createElement('div');
     const avatarName = sender === 'user' ? 'You' : 'AI';
-    messageEl.className = `message-container ${sender}-message`;
+    messageEl.className = `listing-message-card ${sender}`;
     
     let actionButtons = '';
     if (sender === 'bot' && listingData && actionType === 'create_listing') {
@@ -440,15 +434,18 @@ export function appendListingAssistantMessage(message, sender, listingData = nul
     }
     
     messageEl.innerHTML = `
-        <div class="avatar">${avatarName}</div>
-        <div class="message-content">
+        <div class="listing-message-header">
+            <div class="listing-message-avatar">${avatarName.charAt(0)}</div>
+            <div class="listing-message-author">${avatarName}</div>
+        </div>
+        <div class="listing-message-content">
             <p>${message}</p>
             ${actionButtons}
         </div>
     `;
     
-    DOM.listingAssistantLog.appendChild(messageEl);
-    DOM.listingAssistantLog.scrollTop = DOM.listingAssistantLog.scrollHeight;
+    DOM.listingAssistantConversation.appendChild(messageEl);
+    DOM.listingAssistantConversation.scrollTop = DOM.listingAssistantConversation.scrollHeight;
     
     // Add click handler for create listing button
     if (actionButtons) {
@@ -463,6 +460,67 @@ export function appendListingAssistantMessage(message, sender, listingData = nul
             });
         }
     }
+}
+
+/**
+ * Clears the listing assistant chat and resets to welcome message
+ */
+export function resetListingAssistantChat() {
+    if (!DOM.listingAssistantConversation) return;
+    
+    DOM.listingAssistantConversation.innerHTML = `
+        <div class="listing-welcome-card">
+            <div class="listing-welcome-icon">🚗</div>
+            <h3 class="text-xl font-bold mb-2">Welcome to Listing Assistant</h3>
+            <p class="text-gray-400 mb-4">I can help you create and manage car listings through conversation.</p>
+            <div class="listing-features-grid">
+                <div class="listing-feature-card">
+                    <div class="feature-icon">➕</div>
+                    <h4 class="font-semibold">Create Listings</h4>
+                    <p class="text-sm text-gray-400">Add new car listings by chatting</p>
+                </div>
+                <div class="listing-feature-card">
+                    <div class="feature-icon">💰</div>
+                    <h4 class="font-semibold">Price Suggestions</h4>
+                    <p class="text-sm text-gray-400">Get market-based pricing advice</p>
+                </div>
+                <div class="listing-feature-card">
+                    <div class="feature-icon">✏️</div>
+                    <h4 class="font-semibold">Edit Listings</h4>
+                    <p class="text-sm text-gray-400">Update existing listings easily</p>
+                </div>
+                <div class="listing-feature-card">
+                    <div class="feature-icon">💬</div>
+                    <h4 class="font-semibold">Ask Questions</h4>
+                    <p class="text-sm text-gray-400">Get help with listing requirements</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Clears the chatbot chat and resets to welcome message
+ */
+export function resetChatbotChat() {
+    if (!DOM.chatbotLog) return;
+    
+    DOM.chatbotLog.innerHTML = `
+        <div class="message-container bot-message initial-bot-message" data-message-id="welcome">
+            <div class="avatar">AI</div>
+            <div class="message-content">
+                <p>Welcome to the IntelliWheels AI Assistant. How can I help you today?</p>
+            </div>
+            <div class="message-rating hidden">
+                <span class="text-xs text-gray-400 mr-2">Rate this response:</span>
+                <button class="rating-btn" data-rating="1" title="Poor">⭐</button>
+                <button class="rating-btn" data-rating="2" title="Fair">⭐</button>
+                <button class="rating-btn" data-rating="3" title="Good">⭐</button>
+                <button class="rating-btn" data-rating="4" title="Very Good">⭐</button>
+                <button class="rating-btn" data-rating="5" title="Excellent">⭐</button>
+            </div>
+        </div>
+    `;
 }
 
 /**

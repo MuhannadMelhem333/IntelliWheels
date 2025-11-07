@@ -11,6 +11,8 @@ import {
     showCarInfoModal, 
     appendMessage, 
     appendListingAssistantMessage,
+    resetListingAssistantChat,
+    resetChatbotChat,
     createParticles, 
     showTypingIndicator, 
     hideTypingIndicator,
@@ -59,11 +61,308 @@ let isAuthenticated = false; // Authentication state
 let currentUser = null; // Current logged-in user
 let abortController = null; // For canceling API requests
 
+// Chat session management
+let chatbotSessions = []; // Array of {id, title, history, createdAt, updatedAt}
+let listingAssistantSessions = []; // Array of {id, title, history, createdAt, updatedAt}
+let currentChatbotSessionId = null;
+let currentListingAssistantSessionId = null;
+
 // --- LOCALSTORAGE FUNCTIONS ---
 const Storage = {
     getFavorites: () => JSON.parse(localStorage.getItem('carFavorites')) || [],
     saveFavorites: (favs) => localStorage.setItem('carFavorites', JSON.stringify(favs)),
+    getChatbotSessions: () => JSON.parse(localStorage.getItem('chatbotSessions')) || [],
+    saveChatbotSessions: (sessions) => localStorage.setItem('chatbotSessions', JSON.stringify(sessions)),
+    getListingAssistantSessions: () => JSON.parse(localStorage.getItem('listingAssistantSessions')) || [],
+    saveListingAssistantSessions: (sessions) => localStorage.setItem('listingAssistantSessions', JSON.stringify(sessions)),
 };
+
+// --- CHAT SESSION MANAGEMENT ---
+function generateSessionId() {
+    return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function createNewChatbotSession() {
+    const sessionId = generateSessionId();
+    const session = {
+        id: sessionId,
+        title: 'New Chat',
+        history: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    chatbotSessions.unshift(session);
+    Storage.saveChatbotSessions(chatbotSessions);
+    currentChatbotSessionId = sessionId;
+    conversationHistory = [];
+    resetChatbotChat();
+    renderChatbotChatList();
+    return sessionId;
+}
+
+function createNewListingAssistantSession() {
+    const sessionId = generateSessionId();
+    const session = {
+        id: sessionId,
+        title: 'New Chat',
+        history: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    listingAssistantSessions.unshift(session);
+    Storage.saveListingAssistantSessions(listingAssistantSessions);
+    currentListingAssistantSessionId = sessionId;
+    listingAssistantHistory = [];
+    resetListingAssistantChat();
+    renderListingAssistantChatList();
+    return sessionId;
+}
+
+function switchChatbotSession(sessionId) {
+    const session = chatbotSessions.find(s => s.id === sessionId);
+    if (!session) return;
+    
+    currentChatbotSessionId = sessionId;
+    conversationHistory = session.history || [];
+    
+    // Render the conversation
+    if (DOM.chatbotLog) {
+        DOM.chatbotLog.innerHTML = '';
+        conversationHistory.forEach(msg => {
+            appendMessage(msg.text, msg.role === 'user' ? 'user' : 'bot');
+        });
+        if (conversationHistory.length === 0) {
+            resetChatbotChat();
+        }
+    }
+    
+    renderChatbotChatList();
+}
+
+function switchListingAssistantSession(sessionId) {
+    const session = listingAssistantSessions.find(s => s.id === sessionId);
+    if (!session) return;
+    
+    currentListingAssistantSessionId = sessionId;
+    listingAssistantHistory = session.history || [];
+    
+    // Render the conversation
+    if (DOM.listingAssistantConversation) {
+        DOM.listingAssistantConversation.innerHTML = '';
+        if (listingAssistantHistory.length === 0) {
+            // Show welcome card
+            DOM.listingAssistantConversation.innerHTML = `
+                <div class="listing-welcome-card">
+                    <div class="listing-welcome-icon">🚗</div>
+                    <h3 class="text-xl font-bold mb-2">Welcome to Listing Assistant</h3>
+                    <p class="text-gray-400 mb-4">I can help you create and manage car listings through conversation.</p>
+                    <div class="listing-features-grid">
+                        <div class="listing-feature-card">
+                            <div class="feature-icon">➕</div>
+                            <h4 class="font-semibold">Create Listings</h4>
+                            <p class="text-sm text-gray-400">Add new car listings by chatting</p>
+                        </div>
+                        <div class="listing-feature-card">
+                            <div class="feature-icon">💰</div>
+                            <h4 class="font-semibold">Price Suggestions</h4>
+                            <p class="text-sm text-gray-400">Get market-based pricing advice</p>
+                        </div>
+                        <div class="listing-feature-card">
+                            <div class="feature-icon">✏️</div>
+                            <h4 class="font-semibold">Edit Listings</h4>
+                            <p class="text-sm text-gray-400">Update existing listings easily</p>
+                        </div>
+                        <div class="listing-feature-card">
+                            <div class="feature-icon">💬</div>
+                            <h4 class="font-semibold">Ask Questions</h4>
+                            <p class="text-sm text-gray-400">Get help with listing requirements</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            listingAssistantHistory.forEach(msg => {
+                appendListingAssistantMessage(msg.text, msg.role === 'user' ? 'user' : 'bot');
+            });
+        }
+    }
+    
+    renderListingAssistantChatList();
+}
+
+function deleteChatbotSession(sessionId) {
+    chatbotSessions = chatbotSessions.filter(s => s.id !== sessionId);
+    Storage.saveChatbotSessions(chatbotSessions);
+    if (currentChatbotSessionId === sessionId) {
+        if (chatbotSessions.length > 0) {
+            switchChatbotSession(chatbotSessions[0].id);
+        } else {
+            createNewChatbotSession();
+        }
+    }
+    renderChatbotChatList();
+}
+
+function deleteListingAssistantSession(sessionId) {
+    listingAssistantSessions = listingAssistantSessions.filter(s => s.id !== sessionId);
+    Storage.saveListingAssistantSessions(listingAssistantSessions);
+    if (currentListingAssistantSessionId === sessionId) {
+        if (listingAssistantSessions.length > 0) {
+            switchListingAssistantSession(listingAssistantSessions[0].id);
+        } else {
+            createNewListingAssistantSession();
+        }
+    }
+    renderListingAssistantChatList();
+}
+
+function updateChatbotSessionTitle(sessionId, title) {
+    const session = chatbotSessions.find(s => s.id === sessionId);
+    if (session) {
+        session.title = title;
+        session.updatedAt = new Date().toISOString();
+        Storage.saveChatbotSessions(chatbotSessions);
+        renderChatbotChatList();
+    }
+}
+
+function updateListingAssistantSessionTitle(sessionId, title) {
+    const session = listingAssistantSessions.find(s => s.id === sessionId);
+    if (session) {
+        session.title = title;
+        session.updatedAt = new Date().toISOString();
+        Storage.saveListingAssistantSessions(listingAssistantSessions);
+        renderListingAssistantChatList();
+    }
+}
+
+function saveChatbotSession() {
+    if (!currentChatbotSessionId) return;
+    const session = chatbotSessions.find(s => s.id === currentChatbotSessionId);
+    if (session) {
+        session.history = conversationHistory;
+        session.updatedAt = new Date().toISOString();
+        // Update title from first user message if title is still "New Chat"
+        if (session.title === 'New Chat' && conversationHistory.length > 0) {
+            const firstUserMsg = conversationHistory.find(m => m.role === 'user');
+            if (firstUserMsg) {
+                session.title = firstUserMsg.text.substring(0, 50) + (firstUserMsg.text.length > 50 ? '...' : '');
+            }
+        }
+        Storage.saveChatbotSessions(chatbotSessions);
+        renderChatbotChatList();
+    }
+}
+
+function saveListingAssistantSession() {
+    if (!currentListingAssistantSessionId) return;
+    const session = listingAssistantSessions.find(s => s.id === currentListingAssistantSessionId);
+    if (session) {
+        session.history = listingAssistantHistory;
+        session.updatedAt = new Date().toISOString();
+        // Update title from first user message if title is still "New Chat"
+        if (session.title === 'New Chat' && listingAssistantHistory.length > 0) {
+            const firstUserMsg = listingAssistantHistory.find(m => m.role === 'user');
+            if (firstUserMsg) {
+                session.title = firstUserMsg.text.substring(0, 50) + (firstUserMsg.text.length > 50 ? '...' : '');
+            }
+        }
+        Storage.saveListingAssistantSessions(listingAssistantSessions);
+        renderListingAssistantChatList();
+    }
+}
+
+function renderChatbotChatList() {
+    if (!DOM.chatbotChatList) return;
+    
+    if (chatbotSessions.length === 0) {
+        DOM.chatbotChatList.innerHTML = '<p class="text-gray-400 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
+        return;
+    }
+    
+    DOM.chatbotChatList.innerHTML = chatbotSessions.map(session => {
+        const isActive = session.id === currentChatbotSessionId;
+        const preview = session.history.length > 0 
+            ? (session.history[session.history.length - 1].text || '').substring(0, 40) + '...'
+            : 'No messages yet';
+        const date = new Date(session.updatedAt).toLocaleDateString();
+        
+        return `
+            <div class="chat-item ${isActive ? 'active' : ''}" data-session-id="${session.id}">
+                <div class="chat-item-title">${session.title}</div>
+                <div class="chat-item-preview">${preview}</div>
+                <div class="chat-item-date">${date}</div>
+                <button class="chat-item-delete" data-session-id="${session.id}" title="Delete chat">×</button>
+            </div>
+        `;
+    }).join('');
+    
+    // Add click handlers
+    DOM.chatbotChatList.querySelectorAll('.chat-item').forEach(item => {
+        const sessionId = item.dataset.sessionId;
+        item.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('chat-item-delete')) {
+                switchChatbotSession(sessionId);
+            }
+        });
+    });
+    
+    // Add delete handlers
+    DOM.chatbotChatList.querySelectorAll('.chat-item-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Are you sure you want to delete this chat?')) {
+                deleteChatbotSession(btn.dataset.sessionId);
+            }
+        });
+    });
+}
+
+function renderListingAssistantChatList() {
+    if (!DOM.listingAssistantChatList) return;
+    
+    if (listingAssistantSessions.length === 0) {
+        DOM.listingAssistantChatList.innerHTML = '<p class="text-gray-400 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
+        return;
+    }
+    
+    DOM.listingAssistantChatList.innerHTML = listingAssistantSessions.map(session => {
+        const isActive = session.id === currentListingAssistantSessionId;
+        const preview = session.history.length > 0 
+            ? (session.history[session.history.length - 1].text || '').substring(0, 40) + '...'
+            : 'No messages yet';
+        const date = new Date(session.updatedAt).toLocaleDateString();
+        
+        return `
+            <div class="chat-item ${isActive ? 'active' : ''}" data-session-id="${session.id}">
+                <div class="chat-item-title">${session.title}</div>
+                <div class="chat-item-preview">${preview}</div>
+                <div class="chat-item-date">${date}</div>
+                <button class="chat-item-delete" data-session-id="${session.id}" title="Delete chat">×</button>
+            </div>
+        `;
+    }).join('');
+    
+    // Add click handlers
+    DOM.listingAssistantChatList.querySelectorAll('.chat-item').forEach(item => {
+        const sessionId = item.dataset.sessionId;
+        item.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('chat-item-delete')) {
+                switchListingAssistantSession(sessionId);
+            }
+        });
+    });
+    
+    // Add delete handlers
+    DOM.listingAssistantChatList.querySelectorAll('.chat-item-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Are you sure you want to delete this chat?')) {
+                deleteListingAssistantSession(btn.dataset.sessionId);
+            }
+        });
+    });
+}
 
 // --- API DATA FETCHING ---
 async function fetchCarData() {
@@ -660,13 +959,18 @@ async function handleListingAssistantSubmit(event) {
     
     listingAssistantHistory.push({ role: 'user', text: message });
     
+    // Create session if doesn't exist
+    if (!currentListingAssistantSessionId) {
+        createNewListingAssistantSession();
+    }
+    
     DOM.listingAssistantInput.value = '';
-    showTypingIndicator(DOM.listingAssistantLog);
+    showTypingIndicator(DOM.listingAssistantConversation);
     isLoading = true;
 
     try {
         const response = await handleListingAssistantQuery(message, GEMINI_API_KEY, listingAssistantHistory);
-        hideTypingIndicator(DOM.listingAssistantLog);
+        hideTypingIndicator(DOM.listingAssistantConversation);
         
         if (!response.success) {
             let errorMessage = response.error || response.response || "I'm sorry, I couldn't generate a response.";
@@ -685,9 +989,12 @@ async function handleListingAssistantSubmit(event) {
             if (listingAssistantHistory.length > 20) {
                 listingAssistantHistory = listingAssistantHistory.slice(-20);
             }
+            
+            // Save session
+            saveListingAssistantSession();
         }
     } catch (error) {
-        hideTypingIndicator(DOM.listingAssistantLog);
+        hideTypingIndicator(DOM.listingAssistantConversation);
         const errorMsg = `I'm sorry, I encountered an error: ${error.message || 'Unknown error'}. Please try again later.`;
         appendListingAssistantMessage(errorMsg, 'bot');
         console.error("Listing assistant error:", error);
@@ -773,6 +1080,11 @@ async function handleChatSubmit(event) {
     // Add user message to conversation history
     conversationHistory.push({ role: 'user', text: message });
     
+    // Create session if doesn't exist
+    if (!currentChatbotSessionId) {
+        createNewChatbotSession();
+    }
+    
     DOM.chatbotInput.value = '';
     showTypingIndicator();
     isLoading = true;
@@ -812,6 +1124,9 @@ async function handleChatSubmit(event) {
             if (conversationHistory.length > 20) {
                 conversationHistory = conversationHistory.slice(-20);
             }
+            
+            // Save session
+            saveChatbotSession();
             
             // Log intent for debugging
             if (response.intent) {
@@ -1047,6 +1362,7 @@ function setupEventListeners() {
         DOM.navButtons.chatbot.addEventListener('click', () => {
             if (!requireAuth()) return;
             showPage('chatbot');
+            renderChatbotChatList();
         });
     }
     
@@ -1054,6 +1370,7 @@ function setupEventListeners() {
         DOM.navButtons.listingAssistant.addEventListener('click', () => {
             if (!requireAuth()) return;
             showPage('listingAssistant');
+            renderListingAssistantChatList();
         });
     }
     
@@ -1197,6 +1514,22 @@ function setupEventListeners() {
             }
         });
     }
+    if (DOM.listingAssistantNewChatBtn) {
+        DOM.listingAssistantNewChatBtn.addEventListener('click', () => {
+            if (!requireAuth()) return;
+            createNewListingAssistantSession();
+            showSuccess('Started a new chat');
+        });
+    }
+
+    // Chatbot New Chat
+    if (DOM.chatbotNewChatBtn) {
+        DOM.chatbotNewChatBtn.addEventListener('click', () => {
+            if (!requireAuth()) return;
+            createNewChatbotSession();
+            showSuccess('Started a new chat');
+        });
+    }
 
     // Modal
     if (DOM.carInfoCloseBtn) {
@@ -1287,6 +1620,41 @@ async function init() {
     
     // Refresh DOM elements to ensure they're all available
     refreshDOM();
+    
+    // Load chat sessions from localStorage
+    chatbotSessions = Storage.getChatbotSessions();
+    listingAssistantSessions = Storage.getListingAssistantSessions();
+    
+    // Create initial sessions if none exist
+    if (chatbotSessions.length === 0) {
+        createNewChatbotSession();
+    } else {
+        currentChatbotSessionId = chatbotSessions[0].id;
+        conversationHistory = chatbotSessions[0].history || [];
+        renderChatbotChatList();
+        // Render conversation if history exists
+        if (conversationHistory.length > 0 && DOM.chatbotLog) {
+            DOM.chatbotLog.innerHTML = '';
+            conversationHistory.forEach(msg => {
+                appendMessage(msg.text, msg.role === 'user' ? 'user' : 'bot');
+            });
+        }
+    }
+    
+    if (listingAssistantSessions.length === 0) {
+        createNewListingAssistantSession();
+    } else {
+        currentListingAssistantSessionId = listingAssistantSessions[0].id;
+        listingAssistantHistory = listingAssistantSessions[0].history || [];
+        renderListingAssistantChatList();
+        // Render conversation if history exists
+        if (listingAssistantHistory.length > 0 && DOM.listingAssistantConversation) {
+            DOM.listingAssistantConversation.innerHTML = '';
+            listingAssistantHistory.forEach(msg => {
+                appendListingAssistantMessage(msg.text, msg.role === 'user' ? 'user' : 'bot');
+            });
+        }
+    }
     
     // Check if DOM elements exist
     console.log('Checking DOM elements:');
