@@ -9,6 +9,7 @@ import json
 import os
 from datetime import datetime
 from functools import wraps
+import re
 
 try:
     import requests
@@ -22,6 +23,9 @@ CORS(app)  # Enable CORS for frontend
 
 # Database configuration
 DB_PATH = 'intelliwheels.db'
+
+# In-memory conversation store per session
+CHAT_SESSIONS = {}
 
 # Initialize database
 def init_db():
@@ -419,6 +423,8 @@ def chatbot():
         data = request.json
         query = data.get('query', '')
         api_key = data.get('api_key') or os.getenv('GEMINI_API_KEY')
+        history = data.get('history', [])  # Client-provided conversation history
+        session_id = data.get('session') or request.args.get('session') or 'default'
         
         if not query:
             return jsonify({'success': False, 'error': 'Query is required'}), 400
@@ -429,33 +435,107 @@ def chatbot():
                 'error': 'API key is missing. Please add your Gemini API key.'
             }), 400
         
-        # Get car data for context
+        # Merge with server-side session history
+        server_history = CHAT_SESSIONS.get(session_id, [])
+        combined_history = server_history + history if history else server_history
+
+        # Limit combined history to last 10 messages to avoid token limits
+        if len(combined_history) > 10:
+            combined_history = combined_history[-10:]
+            print(f"⚠️ Conversation history truncated to last 10 messages for session {session_id}")
+        
+        # Detect Arabic to respond in user's language (check query and history)
+        is_arabic = bool(re.search(r"[\u0600-\u06FF]", query))
+        if not is_arabic and combined_history:
+            # Check if any previous message was in Arabic
+            for msg in combined_history[-3:]:  # Check last 3 messages
+                if msg.get('text') and re.search(r"[\u0600-\u06FF]", msg.get('text', '')):
+                    is_arabic = True
+                    break
+
+        # Detect region/country mentioned in the query to guide regional pricing
+        region_currency_map = {
+            'jordan': 'JOD', 'amman': 'JOD',
+            'uae': 'AED', 'dubai': 'AED', 'abu dhabi': 'AED', 'united arab emirates': 'AED',
+            'ksa': 'SAR', 'saudi': 'SAR', 'saudi arabia': 'SAR', 'riyadh': 'SAR', 'jeddah': 'SAR',
+            'qatar': 'QAR', 'doha': 'QAR',
+            'kuwait': 'KWD',
+            'bahrain': 'BHD',
+            'oman': 'OMR', 'muscat': 'OMR',
+            'egypt': 'EGP', 'cairo': 'EGP',
+            'morocco': 'MAD', 'casablanca': 'MAD', 'marrakesh': 'MAD',
+            'lebanon': 'LBP', 'beirut': 'LBP',
+            'iraq': 'IQD', 'baghdad': 'IQD',
+            'palestine': 'ILS', 'west bank': 'ILS', 'gaza': 'ILS', 'jerusalem': 'ILS',
+            'syria': 'SYP', 'damascus': 'SYP',
+            'turkey': 'TRY', 'istanbul': 'TRY'
+        }
+        query_lower = query.lower()
+        detected_region = None
+        detected_currency = None
+        for key, cur in region_currency_map.items():
+            if key in query_lower:
+                detected_region = key
+                detected_currency = cur
+                break
+
+        # Build a relevant car sample based on the query terms
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT make, model, year, price, currency FROM cars LIMIT 10")
-        cars_sample = cursor.fetchall()
+
+        # Extract simple tokens for LIKE search (make/model/year)
+        tokens = [t for t in re.findall(r"[A-Za-z\u0600-\u06FF0-9]+", query) if len(t) >= 3]
+        like_clauses = []
+        params = []
+        for t in tokens[:5]:  # limit to first 5 tokens
+            like_clauses.append("(make LIKE ? OR model LIKE ? OR CAST(year AS TEXT) LIKE ?)")
+            pattern = f"%{t}%"
+            params.extend([pattern, pattern, pattern])
+
+        cars_sample = []
+        if like_clauses:
+            sql = (
+                "SELECT make, model, year, price, currency FROM cars "
+                f"WHERE {' AND '.join(like_clauses)} "
+                "ORDER BY year DESC LIMIT 20"
+            )
+            try:
+                cursor.execute(sql, params)
+                cars_sample = cursor.fetchall()
+            except Exception:
+                cars_sample = []
+
+        # Fallback sample if no relevant matches
+        if not cars_sample:
+            cursor.execute("SELECT make, model, year, price, currency FROM cars ORDER BY id DESC LIMIT 10")
+            cars_sample = cursor.fetchall()
+
         conn.close()
-        
+
         # Build context
         cars_context = "\n".join([
             f"- {row[0]} {row[1]} ({row[2]}): {row[3]} {row[4]}"
             for row in cars_sample
         ])
-        
-        # Build system prompt with car context
-        if cars_sample:
-            system_instruction = f"""You are an automotive expert assistant for IntelliWheels, a car catalog platform.
-You can answer questions about cars, car maintenance, specifications, and help users find the right vehicle.
 
-Available cars in our catalog (sample):
+        # Build system prompt with catalog-first policy and regional fallback
+        language_hint = "Arabic" if is_arabic else "English"
+        region_hint_line = (
+            f"Detected region: {detected_region} | Preferred currency: {detected_currency}\n"
+            if detected_region and detected_currency else ""
+        )
+
+        system_instruction = f"""You are IntelliWheels' automotive expert assistant.
+Follow this policy:
+1) If the user's question matches vehicles in the IntelliWheels catalog CONTEXT below, answer using that catalog data (prices/specs) verbatim.
+2) If there is no relevant match in the catalog, answer using your general automotive knowledge and typical pricing for the user's region. Provide an approximate range and clearly state that prices vary by trim, mileage, and condition. Use the preferred currency if provided.
+3) If the user requests a specific country/region and the catalog lacks regional pricing, include a short note that the catalog has no regional price and you're giving a typical market estimate.
+
+{region_hint_line}Answer in {language_hint}. Be concise and helpful. If no clear match, ask one short clarifying question.
+
+CATALOG CONTEXT (sample rows):
 {cars_context}
-
-Be concise, helpful, and professional. Use an encouraging and friendly tone."""
-        else:
-            system_instruction = """You are an automotive expert assistant for IntelliWheels, a car catalog platform.
-You can answer questions about cars, car maintenance, specifications, and help users find the right vehicle.
-
-Be concise, helpful, and professional. Use an encouraging and friendly tone."""
+"""
         
         try:
             # Use Gemini REST API directly
@@ -466,23 +546,38 @@ Be concise, helpful, and professional. Use an encouraging and friendly tone."""
                 'X-goog-api-key': api_key
             }
             
+            # Build conversation contents with history
+            contents = []
+            
+            # Convert history to Gemini format (alternating user/model)
+            for msg in combined_history:
+                role = "user" if msg.get('role') == 'user' else "model"
+                contents.append({
+                    "parts": [{"text": msg.get('text', '')}],
+                    "role": role
+                })
+            
+            # Add current user query
+            contents.append({
+                "parts": [{"text": query}],
+                "role": "user"
+            })
+            
+            # Build payload with system instruction and conversation history
             payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "text": f"{system_instruction}\n\nUser Question: {query}\n\nAssistant Response:"
-                            }
-                        ]
-                    }
-                ],
+                "contents": contents,
+                "systemInstruction": {
+                    "parts": [{"text": system_instruction}]
+                },
                 "generationConfig": {
-                    "temperature": 0.7,
+                    "temperature": 0.2,
                     "topP": 0.8,
                     "topK": 40,
                     "maxOutputTokens": 1024
                 }
             }
+            
+            print(f"📝 Conversation history: {len(combined_history)} previous messages (session {session_id})")
             
             print(f"📝 Sending request to Gemini API for query: {query[:50]}...")
             print(f"🔑 Using API key: {api_key[:10]}...")
@@ -548,10 +643,21 @@ Be concise, helpful, and professional. Use an encouraging and friendly tone."""
                 response_text = "I'm sorry, I received an empty response. Please try asking your question differently."
             
             print(f"📤 Returning response: {response_text[:100]}...")
+
+            # Persist conversation to server-side store
+            # Append the user query and model response for this session
+            session_messages = CHAT_SESSIONS.get(session_id, [])
+            session_messages.append({ 'role': 'user', 'text': query })
+            session_messages.append({ 'role': 'bot', 'text': response_text })
+            # Keep only last 10 messages
+            if len(session_messages) > 10:
+                session_messages = session_messages[-10:]
+            CHAT_SESSIONS[session_id] = session_messages
             
             return jsonify({
                 'success': True,
-                'response': response_text
+                'response': response_text,
+                'session': session_id
             })
             
         except requests.exceptions.Timeout:

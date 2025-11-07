@@ -142,19 +142,25 @@ export async function removeFavorite(carId) {
 
 /**
  * Send a message to the AI chatbot
+ * @param {string} query - The user's message
+ * @param {string} apiKey - The Gemini API key
+ * @param {Array} history - Conversation history array with {role: 'user'|'bot', text: string}
  */
-export async function handleChatbotQuery(query, apiKey) {
+export async function handleChatbotQuery(query, apiKey, history = []) {
     if (!apiKey || apiKey.trim() === '' || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
         return "Error: API key is missing. Please add your Gemini API key to enable the chatbot.";
     }
 
     try {
         console.log('Sending chatbot query:', query);
+        console.log('Conversation history length:', history.length);
         const response = await apiRequest('/chatbot', {
             method: 'POST',
             body: JSON.stringify({
                 query: query,
-                api_key: apiKey
+                api_key: apiKey,
+                history: history, // Send conversation history
+                session: USER_SESSION // Send session id for server-side memory
             })
         });
 

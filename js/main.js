@@ -41,6 +41,7 @@ let currentFilters = {
     sort: 'default'
 };
 let isLoading = false;
+let conversationHistory = []; // Store conversation history for chatbot
 
 // --- LOCALSTORAGE FUNCTIONS ---
 const Storage = {
@@ -310,13 +311,17 @@ async function handleChatSubmit() {
     if (!message || isLoading) return;
 
     appendMessage(message, 'user');
+    
+    // Add user message to conversation history
+    conversationHistory.push({ role: 'user', text: message });
+    
     DOM.chatbotInput.value = '';
     showTypingIndicator();
     isLoading = true;
 
     try {
         console.log('Submitting chat message with API key:', GEMINI_API_KEY ? 'Present' : 'Missing');
-        const responseText = await handleChatbotQuery(message, GEMINI_API_KEY);
+        const responseText = await handleChatbotQuery(message, GEMINI_API_KEY, conversationHistory);
         hideTypingIndicator();
         
         // Check if response starts with "Error:" and handle it
@@ -325,6 +330,8 @@ async function handleChatSubmit() {
             showError(null, responseText);
         } else {
             appendMessage(responseText || "I'm sorry, I couldn't generate a response.", 'bot');
+            // Add bot response to conversation history
+            conversationHistory.push({ role: 'bot', text: responseText });
         }
     } catch (error) {
         hideTypingIndicator();
