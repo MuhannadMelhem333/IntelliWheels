@@ -33,6 +33,9 @@ import {
     addFavorite, 
     removeFavorite,
     getMyListings,
+    getProfile,
+    updateProfile,
+    getAnalyticsInsights,
     handleChatbotQuery,
     handleListingAssistantQuery,
     healthCheck,
@@ -736,19 +739,24 @@ function updateAuthUI() {
     if (isAuthenticated && currentUser) {
         // Show main navigation, hide auth section
         if (DOM.navMainSection) DOM.navMainSection.classList.remove('hidden');
+        if (DOM.mobileMenuToggle) DOM.mobileMenuToggle.classList.remove('hidden');
         if (DOM.navAuthSection) {
             DOM.navAuthSection.classList.remove('hidden');
             if (DOM.userNameDisplay) {
                 DOM.userNameDisplay.textContent = `Welcome, ${currentUser.username}`;
                 DOM.userNameDisplay.classList.remove('hidden');
             }
+            if (DOM.navButtons.profile) DOM.navButtons.profile.classList.remove('hidden');
             if (DOM.navLogout) DOM.navLogout.classList.remove('hidden');
         }
     } else {
         // Hide main navigation, show auth section
         if (DOM.navMainSection) DOM.navMainSection.classList.add('hidden');
+        if (DOM.mobileMenuToggle) DOM.mobileMenuToggle.classList.add('hidden');
+        if (DOM.mobileMenu) DOM.mobileMenu.classList.add('hidden');
         if (DOM.navAuthSection) {
             if (DOM.userNameDisplay) DOM.userNameDisplay.classList.add('hidden');
+            if (DOM.navButtons.profile) DOM.navButtons.profile.classList.add('hidden');
             if (DOM.navLogout) DOM.navLogout.classList.add('hidden');
         }
     }
@@ -1164,9 +1172,13 @@ async function handleChatSubmit(event) {
 }
 
 // --- ANALYTICS PAGE ---
-async function renderAnalyticsPage() {
+let currentAnalyticsFilter = 'all';
+
+async function renderAnalyticsPage(filter = 'all') {
     const container = document.getElementById('analytics-container');
     if (!container) return;
+    
+    currentAnalyticsFilter = filter;
     
     try {
         container.innerHTML = `
@@ -1176,34 +1188,65 @@ async function renderAnalyticsPage() {
             </div>
         `;
         
-        const { getAnalyticsInsights } = await import('./api.js');
-        const response = await getAnalyticsInsights();
+        const response = await getAnalyticsInsights(filter);
         
         if (!response.success) {
             throw new Error(response.error || 'Failed to load analytics');
         }
         
         const insights = response.insights;
+        const userStats = response.user_stats || {};
+        const filterType = response.filter || 'all';
+        
+        // Update filter buttons
+        document.querySelectorAll('.analytics-filter-btn').forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.filter === filterType) {
+                btn.classList.add('active');
+            }
+        });
+        
+        const filterLabel = filterType === 'my' ? 'My Listings' : filterType === 'favorites' ? 'My Favorites' : 'All Data';
         
         container.innerHTML = `
             <div class="space-y-6">
+                ${filterType !== 'all' ? `
+                <div class="analytics-card bg-gradient-to-r from-blue-600 to-purple-600">
+                    <h3 class="text-lg font-bold text-white mb-2">📊 Personal Statistics</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <p class="text-sm text-blue-100">My Listings</p>
+                            <p class="text-2xl font-bold text-white">${userStats.my_listings || 0}</p>
+                        </div>
+                        <div>
+                            <p class="text-sm text-blue-100">My Favorites</p>
+                            <p class="text-2xl font-bold text-white">${userStats.favorites || 0}</p>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+                
                 <!-- Summary Cards -->
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div class="analytics-card">
+                    <div class="analytics-card interactive-card" data-metric="total">
                         <h3 class="text-sm text-gray-400 mb-1">Total Cars</h3>
                         <p class="text-3xl font-bold text-white">${insights.summary.total_cars}</p>
+                        <p class="text-xs text-gray-500 mt-1">${filterLabel}</p>
                     </div>
-                    <div class="analytics-card">
+                    <div class="analytics-card interactive-card" data-metric="makes">
                         <h3 class="text-sm text-gray-400 mb-1">Total Makes</h3>
                         <p class="text-3xl font-bold text-white">${insights.summary.total_makes}</p>
+                        <p class="text-xs text-gray-500 mt-1">Unique brands</p>
                     </div>
-                    <div class="analytics-card">
+                    <div class="analytics-card interactive-card" data-metric="price">
                         <h3 class="text-sm text-gray-400 mb-1">Avg Price</h3>
-                        <p class="text-3xl font-bold text-white">${new Intl.NumberFormat().format(insights.summary.average_price)}</p>
+                        <p class="text-3xl font-bold text-white">${new Intl.NumberFormat().format(Math.round(insights.summary.average_price))}</p>
+                        <p class="text-xs text-gray-500 mt-1">Range: ${new Intl.NumberFormat().format(Math.round(insights.summary.min_price))} - ${new Intl.NumberFormat().format(Math.round(insights.summary.max_price))}</p>
                     </div>
-                    <div class="analytics-card">
+                    <div class="analytics-card interactive-card" data-metric="rating">
                         <h3 class="text-sm text-gray-400 mb-1">Avg Rating</h3>
                         <p class="text-3xl font-bold text-white">${insights.summary.average_rating.toFixed(1)} ⭐</p>
+                        <p class="text-xs text-gray-500 mt-1">Out of 5.0</p>
                     </div>
                 </div>
                 
@@ -1215,29 +1258,47 @@ async function renderAnalyticsPage() {
                     </div>
                 </div>
                 
-                <!-- Top Makes -->
+                <!-- Top Makes with Interactive Bars -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">Top Makes</h2>
-                    <div class="space-y-2">
-                        ${insights.top_makes.map((item, index) => `
-                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg">
-                                <span class="text-white font-semibold">${index + 1}. ${item.make}</span>
-                                <span class="text-blue-400 font-bold">${item.count} cars</span>
+                    <h2 class="text-2xl font-bold text-white mb-4">📈 Top Makes Distribution</h2>
+                    <div class="space-y-3">
+                        ${insights.top_makes.map((item, index) => {
+                            const maxCount = Math.max(...insights.top_makes.map(m => m.count));
+                            const percentage = (item.count / maxCount) * 100;
+                            return `
+                            <div class="analytics-bar-item">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-white font-semibold">${index + 1}. ${item.make}</span>
+                                    <span class="text-blue-400 font-bold">${item.count} cars</span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+                                    <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                                </div>
                             </div>
-                        `).join('')}
+                        `;
+                        }).join('')}
                     </div>
                 </div>
                 
-                <!-- Price Distribution -->
+                <!-- Price Distribution with Interactive Bars -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">Price Distribution</h2>
-                    <div class="space-y-2">
-                        ${Object.entries(insights.price_distribution).map(([range, count]) => `
-                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg">
-                                <span class="text-white">${range}</span>
-                                <span class="text-blue-400 font-bold">${count} cars</span>
+                    <h2 class="text-2xl font-bold text-white mb-4">💰 Price Distribution</h2>
+                    <div class="space-y-3">
+                        ${Object.entries(insights.price_distribution).map(([range, count]) => {
+                            const maxCount = Math.max(...Object.values(insights.price_distribution));
+                            const percentage = (count / maxCount) * 100;
+                            return `
+                            <div class="analytics-bar-item">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-white">${range}</span>
+                                    <span class="text-blue-400 font-bold">${count} cars</span>
+                                </div>
+                                <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+                                    <div class="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                                </div>
                             </div>
-                        `).join('')}
+                        `;
+                        }).join('')}
                     </div>
                 </div>
                 
@@ -1286,6 +1347,324 @@ async function renderAnalyticsPage() {
                 </div>
             `;
         }
+    }
+}
+
+// --- PROFILE PAGE ---
+async function renderProfilePage() {
+    // Wait a bit to ensure page is visible
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    const container = document.getElementById('profile-container');
+    if (!container) {
+        console.error('Profile container not found! Attempting to find page-profile...');
+        const pageProfile = document.getElementById('page-profile');
+        if (pageProfile) {
+            console.log('Found page-profile, searching for container inside...');
+            const foundContainer = pageProfile.querySelector('#profile-container');
+            if (foundContainer) {
+                console.log('Found container inside page-profile');
+                // Use the found container
+                renderProfileContent(foundContainer);
+                return;
+            }
+        }
+        console.error('Could not find profile-container anywhere!');
+        return;
+    }
+    
+    await renderProfileContent(container);
+}
+
+async function renderProfileContent(container) {
+    try {
+        container.innerHTML = `
+            <div class="loading-container">
+                <div class="spinner"></div>
+                <p class="text-gray-400 mt-4">Loading profile...</p>
+            </div>
+        `;
+        
+        const response = await getProfile();
+        
+        if (!response || !response.success) {
+            throw new Error(response?.error || 'Failed to load profile');
+        }
+        
+        if (!response.profile) {
+            throw new Error('Profile data not found in response');
+        }
+        
+        const profile = response.profile;
+        const createdDate = profile.created_at ? new Date(profile.created_at).toLocaleDateString() : 'N/A';
+        const lastLogin = profile.last_login ? new Date(profile.last_login).toLocaleDateString() : 'Never';
+        
+        container.innerHTML = `
+            <div class="space-y-6">
+                <div class="analytics-card">
+                    <h2 class="text-2xl font-bold text-white mb-2">👤 Profile Management</h2>
+                    <p class="text-gray-400 mb-6">Update your account information and password</p>
+                    <form id="profile-form" class="space-y-6">
+                        <!-- Username Section -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                <span class="flex items-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                                    </svg>
+                                    Username
+                                </span>
+                            </label>
+                            <input type="text" id="profile-username" name="username" class="form-input" value="${profile.username}" required minlength="3" maxlength="30">
+                            <p class="text-xs text-gray-500">Your username must be between 3 and 30 characters</p>
+                        </div>
+                        
+                        <!-- Email Section -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                <span class="flex items-center gap-2">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Email Address
+                                </span>
+                            </label>
+                            <input type="email" id="profile-email" name="email" class="form-input" value="${profile.email}" required>
+                            <p class="text-xs text-gray-500">We'll never share your email with anyone else</p>
+                        </div>
+                        
+                        <!-- Password Change Section -->
+                        <div class="pt-4 border-t border-gray-700">
+                            <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                                </svg>
+                                Change Password
+                            </h3>
+                            <p class="text-sm text-gray-400 mb-4">Leave password fields blank if you don't want to change your password</p>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">Current Password *</label>
+                                    <input type="password" id="profile-current-password" name="current_password" class="form-input" placeholder="Enter your current password" autocomplete="current-password">
+                                    <p class="text-xs text-gray-500 mt-1">Required only if changing password</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">New Password</label>
+                                    <input type="password" id="profile-password" name="password" class="form-input" placeholder="Enter new password (minimum 6 characters)" autocomplete="new-password" minlength="6">
+                                    <p class="text-xs text-gray-500 mt-1">Must be at least 6 characters long</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">Confirm New Password</label>
+                                    <input type="password" id="profile-password-confirm" name="password_confirm" class="form-input" placeholder="Confirm your new password" autocomplete="new-password" minlength="6">
+                                    <p class="text-xs text-gray-500 mt-1" id="password-match-message"></p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Account Info Section -->
+                        <div class="pt-4 border-t border-gray-700">
+                            <h3 class="text-lg font-bold text-white mb-4">Account Information</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                <div class="bg-gray-800 bg-opacity-50 p-3 rounded-lg">
+                                    <p class="text-gray-400 mb-1">Account Created</p>
+                                    <p class="text-white font-semibold">${createdDate}</p>
+                                </div>
+                                <div class="bg-gray-800 bg-opacity-50 p-3 rounded-lg">
+                                    <p class="text-gray-400 mb-1">Last Login</p>
+                                    <p class="text-white font-semibold">${lastLogin}</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Action Buttons -->
+                        <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
+                            <button type="button" id="profile-cancel-btn" class="bg-gray-600 text-white py-2 px-6 rounded-lg hover:bg-gray-700 transition-colors">Reset</button>
+                            <button type="submit" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors font-semibold">Save Changes</button>
+                        </div>
+                    </form>
+                    <div id="profile-error" class="hidden mt-4 p-4 bg-red-900 bg-opacity-50 border border-red-500 rounded-lg text-red-200"></div>
+                    <div id="profile-success" class="hidden mt-4 p-4 bg-green-900 bg-opacity-50 border border-green-500 rounded-lg text-green-200"></div>
+                </div>
+            </div>
+        `;
+        
+        // Add password confirmation validation
+        const passwordInput = document.getElementById('profile-password');
+        const passwordConfirmInput = document.getElementById('profile-password-confirm');
+        const passwordMatchMessage = document.getElementById('password-match-message');
+        
+        if (passwordInput && passwordConfirmInput && passwordMatchMessage) {
+            const validatePasswordMatch = () => {
+                const password = passwordInput.value;
+                const confirm = passwordConfirmInput.value;
+                
+                if (confirm.length === 0) {
+                    passwordMatchMessage.textContent = '';
+                    passwordConfirmInput.classList.remove('border-red-500', 'border-green-500');
+                    return;
+                }
+                
+                if (password === confirm) {
+                    passwordMatchMessage.textContent = '✓ Passwords match';
+                    passwordMatchMessage.classList.add('text-green-400');
+                    passwordMatchMessage.classList.remove('text-red-400');
+                    passwordConfirmInput.classList.add('border-green-500');
+                    passwordConfirmInput.classList.remove('border-red-500');
+                } else {
+                    passwordMatchMessage.textContent = '✗ Passwords do not match';
+                    passwordMatchMessage.classList.add('text-red-400');
+                    passwordMatchMessage.classList.remove('text-green-400');
+                    passwordConfirmInput.classList.add('border-red-500');
+                    passwordConfirmInput.classList.remove('border-green-500');
+                }
+            };
+            
+            passwordInput.addEventListener('input', validatePasswordMatch);
+            passwordConfirmInput.addEventListener('input', validatePasswordMatch);
+        }
+        
+        // Add form submit handler
+        const profileForm = document.getElementById('profile-form');
+        if (profileForm) {
+            profileForm.addEventListener('submit', handleProfileUpdate);
+        }
+        
+        const cancelBtn = document.getElementById('profile-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                // Reset form to original values
+                renderProfilePage();
+            });
+        }
+    } catch (error) {
+        console.error('Error rendering profile:', error);
+        if (container) {
+            container.innerHTML = `
+                <div class="analytics-card">
+                    <div class="text-center py-8">
+                        <div class="text-6xl mb-4">⚠️</div>
+                        <h3 class="text-xl font-bold text-white mb-2">Failed to Load Profile</h3>
+                        <p class="text-gray-400 mb-4">${error.message || 'An error occurred while loading your profile'}</p>
+                        <div class="flex gap-3 justify-center">
+                            <button onclick="window.renderProfilePage && window.renderProfilePage()" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                                Retry
+                            </button>
+                            <button onclick="location.reload()" class="bg-gray-600 text-white py-2 px-6 rounded-lg hover:bg-gray-700 transition-colors">
+                                Reload Page
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            console.error('Profile container not available for error display!');
+        }
+    }
+}
+
+// Make renderProfilePage available globally for retry button
+window.renderProfilePage = renderProfilePage;
+
+async function handleProfileUpdate(event) {
+    event.preventDefault();
+    
+    if (isLoading) return;
+    isLoading = true;
+    
+    const errorDiv = document.getElementById('profile-error');
+    const successDiv = document.getElementById('profile-success');
+    
+    if (errorDiv) errorDiv.classList.add('hidden');
+    if (successDiv) successDiv.classList.add('hidden');
+    
+    try {
+        const usernameInput = document.getElementById('profile-username');
+        const emailInput = document.getElementById('profile-email');
+        const currentPasswordInput = document.getElementById('profile-current-password');
+        const newPasswordInput = document.getElementById('profile-password');
+        const passwordConfirmInput = document.getElementById('profile-password-confirm');
+        
+        // Validate username
+        const username = usernameInput.value.trim();
+        if (username.length < 3 || username.length > 30) {
+            throw new Error('Username must be between 3 and 30 characters');
+        }
+        
+        // Validate email
+        const email = emailInput.value.trim();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            throw new Error('Please enter a valid email address');
+        }
+        
+        const updates = {
+            username: username,
+            email: email
+        };
+        
+        // Handle password change
+        const newPassword = newPasswordInput ? newPasswordInput.value : '';
+        const passwordConfirm = passwordConfirmInput ? passwordConfirmInput.value : '';
+        
+        if (newPassword) {
+            if (newPassword.length < 6) {
+                throw new Error('New password must be at least 6 characters long');
+            }
+            
+            if (newPassword !== passwordConfirm) {
+                throw new Error('New passwords do not match');
+            }
+            
+            const currentPassword = currentPasswordInput ? currentPasswordInput.value : '';
+            if (!currentPassword) {
+                throw new Error('Current password is required to change password');
+            }
+            
+            updates.password = newPassword;
+            updates.current_password = currentPassword;
+        }
+        
+        const response = await updateProfile(updates);
+        
+        if (response.success) {
+            if (successDiv) {
+                successDiv.textContent = response.message || 'Profile updated successfully!';
+                successDiv.classList.remove('hidden');
+            }
+            showSuccess('Profile updated successfully!');
+            
+            // Update current user data
+            if (updates.username) {
+                currentUser.username = updates.username;
+                setUserData(currentUser);
+                updateAuthUI();
+            }
+            
+            // Clear password fields
+            if (document.getElementById('profile-current-password')) {
+                document.getElementById('profile-current-password').value = '';
+            }
+            if (document.getElementById('profile-password')) {
+                document.getElementById('profile-password').value = '';
+            }
+            if (document.getElementById('profile-password-confirm')) {
+                document.getElementById('profile-password-confirm').value = '';
+            }
+            
+            // Reload profile after a short delay
+            setTimeout(() => renderProfilePage(), 1500);
+        } else {
+            throw new Error(response.error || 'Failed to update profile');
+        }
+    } catch (error) {
+        console.error("Profile update error:", error);
+        if (errorDiv) {
+            errorDiv.textContent = error.message || 'Could not update profile';
+            errorDiv.classList.remove('hidden');
+        }
+        showError(null, `Could not update profile: ${error.message}`);
+    } finally {
+        isLoading = false;
     }
 }
 
@@ -1471,6 +1850,52 @@ function setupEventListeners() {
             }
         });
     }
+    
+    // Mobile Menu Toggle
+    if (DOM.mobileMenuToggle) {
+        DOM.mobileMenuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (DOM.mobileMenu) {
+                DOM.mobileMenu.classList.toggle('hidden');
+            }
+        });
+    }
+    
+    // Close mobile menu when clicking outside
+    document.addEventListener('click', (event) => {
+        if (DOM.mobileMenu && DOM.mobileMenuToggle) {
+            const isClickInsideMenu = DOM.mobileMenu.contains(event.target);
+            const isClickOnToggle = DOM.mobileMenuToggle.contains(event.target);
+            
+            if (!isClickInsideMenu && !isClickOnToggle && !DOM.mobileMenu.classList.contains('hidden')) {
+                DOM.mobileMenu.classList.add('hidden');
+            }
+        }
+    });
+    
+    // Mobile Navigation Buttons
+    const mobileNavMap = {
+        'mobile-nav-listings': () => { if (requireAuth()) { showPage('listings'); applyFiltersAndRender(); } },
+        'mobile-nav-reviews': () => { if (requireAuth()) { showPage('reviews'); renderReviewsPage(); } },
+        'mobile-nav-favorites': () => { if (requireAuth()) { showPage('favorites'); renderFavoritesPage(); } },
+        'mobile-nav-my-listings': () => { if (requireAuth()) { showPage('myListings'); renderMyListingsPage(); } },
+        'mobile-nav-chatbot': () => { if (requireAuth()) { showPage('chatbot'); renderChatbotChatList(); } },
+        'mobile-nav-listing-assistant': () => { if (requireAuth()) { showPage('listingAssistant'); renderListingAssistantChatList(); } },
+        'mobile-nav-analytics': () => { if (requireAuth()) { showPage('analytics'); } },
+        'mobile-nav-add-listing': () => { if (requireAuth()) { showPage('addListing'); } },
+    };
+    
+    Object.entries(mobileNavMap).forEach(([id, handler]) => {
+        const btn = document.getElementById(id);
+        if (btn) {
+            btn.addEventListener('click', async () => {
+                await handler();
+                if (DOM.mobileMenu) {
+                    DOM.mobileMenu.classList.add('hidden');
+                }
+            });
+        }
+    });
 
     // Navigation (only if authenticated)
     if (DOM.navButtons.listings) {
@@ -1521,13 +1946,32 @@ function setupEventListeners() {
         });
     }
     
+    if (DOM.navButtons.profile) {
+        DOM.navButtons.profile.addEventListener('click', async () => {
+            if (!requireAuth()) return;
+            showPage('profile');
+            // Small delay to ensure page is visible before rendering
+            setTimeout(async () => {
+                await renderProfilePage();
+            }, 100);
+        });
+    }
+    
     if (DOM.navButtons.analytics) {
         DOM.navButtons.analytics.addEventListener('click', async () => {
             if (!requireAuth()) return;
             showPage('analytics');
-            await renderAnalyticsPage();
+            await renderAnalyticsPage(currentAnalyticsFilter);
         });
     }
+    
+    // Analytics filter buttons
+    document.querySelectorAll('.analytics-filter-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const filter = btn.dataset.filter;
+            await renderAnalyticsPage(filter);
+        });
+    });
     
     if (DOM.navButtons.addListing) {
         DOM.navButtons.addListing.addEventListener('click', () => {

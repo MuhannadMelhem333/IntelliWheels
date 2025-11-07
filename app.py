@@ -551,6 +551,124 @@ def verify_session():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/profile', methods=['GET'])
+@require_auth
+def get_profile():
+    """Get current user profile"""
+    try:
+        user_id = request.current_user['user_id']
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, username, email, created_at, last_login
+            FROM users WHERE id = ?
+        ''', (user_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'profile': {
+                'id': row[0],
+                'username': row[1],
+                'email': row[2],
+                'created_at': row[3],
+                'last_login': row[4]
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/profile', methods=['PATCH'])
+@require_auth
+def update_profile():
+    """Update user profile"""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        user_id = request.current_user['user_id']
+        conn = get_db()
+        cursor = conn.cursor()
+        
+        # Check if user exists
+        cursor.execute('SELECT id, username, email FROM users WHERE id = ?', (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        updates = []
+        params = []
+        
+        # Update username
+        if 'username' in data:
+            new_username = data['username'].strip()
+            if new_username and new_username != user[1]:
+                # Check if username already exists
+                cursor.execute('SELECT id FROM users WHERE username = ? AND id != ?', (new_username, user_id))
+                if cursor.fetchone():
+                    conn.close()
+                    return jsonify({'success': False, 'error': 'Username already taken'}), 400
+                updates.append('username = ?')
+                params.append(new_username)
+        
+        # Update email
+        if 'email' in data:
+            new_email = data['email'].strip().lower()
+            if new_email and new_email != user[2]:
+                # Check if email already exists
+                cursor.execute('SELECT id FROM users WHERE email = ? AND id != ?', (new_email, user_id))
+                if cursor.fetchone():
+                    conn.close()
+                    return jsonify({'success': False, 'error': 'Email already taken'}), 400
+                updates.append('email = ?')
+                params.append(new_email)
+        
+        # Update password
+        if 'password' in data and 'current_password' in data:
+            current_password = data['current_password']
+            new_password = data['password']
+            
+            # Verify current password
+            cursor.execute('SELECT password_hash FROM users WHERE id = ?', (user_id,))
+            row = cursor.fetchone()
+            if not row or not verify_password(current_password, row[0]):
+                conn.close()
+                return jsonify({'success': False, 'error': 'Current password is incorrect'}), 400
+            
+            # Validate new password
+            if len(new_password) < 6:
+                conn.close()
+                return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+            
+            password_hash = hash_password(new_password)
+            updates.append('password_hash = ?')
+            params.append(password_hash)
+        
+        if not updates:
+            conn.close()
+            return jsonify({'success': False, 'error': 'No valid fields to update'}), 400
+        
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, params)
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Profile updated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # API Routes
 
 @app.route('/api/cars', methods=['GET'])
@@ -1490,15 +1608,35 @@ def rate_chatbot():
 @app.route('/api/analytics/insights', methods=['GET'])
 @require_auth
 def get_ai_insights():
-    """Get AI-powered data analysis and insights"""
+    """Get AI-powered data analysis and insights (personalized)"""
     try:
+        user_id = request.current_user['user_id']
+        filter_type = request.args.get('filter', 'all')  # all, my, favorites
+        
         conn = get_db()
         cursor = conn.cursor()
         
-        # Get all cars
-        cursor.execute('SELECT * FROM cars')
+        # Get cars based on filter
+        if filter_type == 'my':
+            cursor.execute('SELECT * FROM cars WHERE user_id = ?', (user_id,))
+        elif filter_type == 'favorites':
+            cursor.execute('''
+                SELECT c.* FROM cars c
+                INNER JOIN favorites f ON c.id = f.car_id
+                WHERE f.user_id = ?
+            ''', (user_id,))
+        else:
+            cursor.execute('SELECT * FROM cars')
+        
         rows = cursor.fetchall()
         cars = [car_row_to_dict(row) for row in rows]
+        
+        # Get user-specific stats
+        cursor.execute('SELECT COUNT(*) FROM cars WHERE user_id = ?', (user_id,))
+        my_listings_count = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM favorites WHERE user_id = ?', (user_id,))
+        favorites_count = cursor.fetchone()[0]
         
         if not cars:
             conn.close()
@@ -1550,13 +1688,21 @@ def get_ai_insights():
             currency = car.get('currency', 'AED')
             currency_counts[currency] = currency_counts.get(currency, 0) + 1
         
-        # Generate AI insights using Gemini
+        # Generate personalized AI insights using Gemini
         api_key = os.getenv('GEMINI_API_KEY')
         insights_text = ""
         
         if api_key and REQUESTS_AVAILABLE:
             try:
-                insights_prompt = f"""Analyze this car catalog data and provide 5-7 key insights:
+                personalization = ""
+                if filter_type == 'my':
+                    personalization = f"\n\nPersonal Context: This analysis is for YOUR listings ({my_listings_count} total). Focus on insights about your own inventory, pricing strategies, and recommendations for your listings."
+                elif filter_type == 'favorites':
+                    personalization = f"\n\nPersonal Context: This analysis is for YOUR favorite cars ({favorites_count} total). Focus on insights about your preferences, trends in your saved cars, and recommendations based on your interests."
+                else:
+                    personalization = f"\n\nPersonal Context: You have {my_listings_count} listings and {favorites_count} favorites. Consider these in your analysis."
+                
+                insights_prompt = f"""Analyze this car catalog data and provide 5-7 personalized, actionable insights:
 
 Total Cars: {total_cars}
 Total Makes: {total_makes}
@@ -1570,8 +1716,9 @@ Year Range: {oldest_year} - {newest_year}
 Top Makes: {', '.join([f"{make} ({count})" for make, count in top_makes[:5]])}
 Price Distribution: {price_ranges}
 Currency Distribution: {currency_counts}
+{personalization}
 
-Provide concise, actionable insights about market trends, popular segments, pricing patterns, and recommendations. Format as a numbered list."""
+Provide concise, personalized, actionable insights about market trends, popular segments, pricing patterns, and specific recommendations. Format as a numbered list with emojis for visual appeal."""
                 
                 api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
                 headers = {
@@ -1605,6 +1752,11 @@ Provide concise, actionable insights about market trends, popular segments, pric
         
         return jsonify({
             'success': True,
+            'filter': filter_type,
+            'user_stats': {
+                'my_listings': my_listings_count,
+                'favorites': favorites_count
+            },
             'insights': {
                 'summary': {
                     'total_cars': total_cars,

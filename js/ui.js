@@ -10,6 +10,7 @@ function initializeDOM() {
             reviews: document.getElementById('nav-reviews'),
             favorites: document.getElementById('nav-favorites'),
             myListings: document.getElementById('nav-my-listings'),
+            profile: document.getElementById('nav-profile'),
             chatbot: document.getElementById('nav-chatbot'),
             listingAssistant: document.getElementById('nav-listing-assistant'),
             analytics: document.getElementById('nav-analytics'),
@@ -23,6 +24,7 @@ function initializeDOM() {
             reviews: document.getElementById('page-reviews'),
             favorites: document.getElementById('page-favorites'),
             myListings: document.getElementById('page-my-listings'),
+            profile: document.getElementById('page-profile'),
             chatbot: document.getElementById('page-chatbot'),
             listingAssistant: document.getElementById('page-listing-assistant'),
             analytics: document.getElementById('page-analytics'),
@@ -71,6 +73,9 @@ function initializeDOM() {
         editListingModal: document.getElementById('edit-listing-modal'),
         editListingForm: document.getElementById('edit-listing-form'),
         editListingCancelBtn: document.getElementById('edit-listing-cancel-btn'),
+        // Mobile Menu
+        mobileMenuToggle: document.getElementById('mobile-menu-toggle'),
+        mobileMenu: document.getElementById('mobile-menu'),
     };
 }
 
@@ -125,6 +130,7 @@ export function showPage(pageId) {
         'reviews': DOM.navButtons.reviews,
         'favorites': DOM.navButtons.favorites,
         'myListings': DOM.navButtons.myListings,
+        'profile': DOM.navButtons.profile,
         'chatbot': DOM.navButtons.chatbot,
         'listingAssistant': DOM.navButtons.listingAssistant,
         'analytics': DOM.navButtons.analytics,

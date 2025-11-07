@@ -288,12 +288,35 @@ export async function rateChatbotResponse(messageId, rating, feedback = '') {
 }
 
 /**
- * Get AI-powered analytics insights
+ * Get AI-powered analytics insights (personalized)
+ * @param {string} filter - Filter type: 'all', 'my', or 'favorites'
  * @returns {Promise<Object>} Analytics insights
  */
-export async function getAnalyticsInsights() {
-    return await apiRequest('/analytics/insights', {
+export async function getAnalyticsInsights(filter = 'all') {
+    return await apiRequest(`/analytics/insights?filter=${filter}`, {
         method: 'GET'
+    });
+}
+
+/**
+ * Get user profile
+ * @returns {Promise<Object>} User profile
+ */
+export async function getProfile() {
+    return await apiRequest('/profile', {
+        method: 'GET'
+    });
+}
+
+/**
+ * Update user profile
+ * @param {Object} updates - Profile updates (username, email, password, current_password)
+ * @returns {Promise<Object>} Update result
+ */
+export async function updateProfile(updates) {
+    return await apiRequest('/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(updates)
     });
 }
 
