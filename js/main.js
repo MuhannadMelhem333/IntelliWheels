@@ -2326,6 +2326,45 @@ async function init() {
 window.showCarInfoModal = showCarInfoModal;
 window.showPage = showPage;
 
+// --- THEME TOGGLE (DARK/LIGHT MODE) ---
+function applyTheme(theme) {
+    const body = document.body;
+    const sunIcon = document.getElementById('theme-icon-sun');
+    const moonIcon = document.getElementById('theme-icon-moon');
+    if (theme === 'dark') {
+        body.classList.add('dark-theme');
+        if (sunIcon && moonIcon) { sunIcon.style.display = 'none'; moonIcon.style.display = 'block'; }
+    } else {
+        body.classList.remove('dark-theme');
+        if (sunIcon && moonIcon) { sunIcon.style.display = 'block'; moonIcon.style.display = 'none'; }
+    }
+}
+
+function getPreferredTheme() {
+    // Priority: localStorage > prefers-color-scheme
+    const stored = localStorage.getItem('theme');
+    if (stored) return stored;
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'light';
+}
+
+function setupThemeToggle() {
+    const btn = document.getElementById('theme-toggle-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        const current = document.body.classList.contains('dark-theme') ? 'dark' : 'light';
+        const newTheme = current === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('theme', newTheme);
+        applyTheme(newTheme);
+    });
+}
+
+// At top-level app init (before anything else):
+document.addEventListener('DOMContentLoaded', () => {
+    applyTheme(getPreferredTheme());
+    setupThemeToggle();
+});
+
 // Start initialization
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
     console.log('Document ready, starting init...');

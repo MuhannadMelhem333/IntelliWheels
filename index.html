@@ -21,6 +21,18 @@
                     </svg>
                     <span class="logo-text">Intelli<span class="logo-accent">Wheels</span></span>
                 </button>
+
+                <!-- Theme Toggle Button (Light/Dark) -->
+                <button id="theme-toggle-btn" aria-label="Toggle dark mode" class="ml-2 rounded-full shadow transition p-2 bg-white text-gray-800 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <!-- Sun icon for light, moon for dark will be toggled in JS -->
+                  <svg id="theme-icon-sun" class="w-6 h-6" style="display:block;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="5" stroke="currentColor"/>
+                    <path stroke-linecap="round" stroke-width="2" d="M12 1v2m0 18v2m9-9h2M1 12H3m15.364 6.364l1.414 1.414M4.222 4.222l1.414 1.414m12.728-1.414l-1.414 1.414M4.222 19.778l1.414-1.414"/>
+                  </svg>
+                  <svg id="theme-icon-moon" class="w-6 h-6" style="display:none;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M21 12.79A9 9 0 1111.21 3c0 4.97 4.03 9 9 9 .21 0 .42 0 .79-.01z"/>
+                  </svg>
+                </button>
                 
                 <!-- Mobile Menu Toggle -->
                 <button id="mobile-menu-toggle" class="mobile-menu-btn hidden">
