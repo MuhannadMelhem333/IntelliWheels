@@ -70,6 +70,7 @@ let chatbotSessions = []; // Array of {id, title, history, createdAt, updatedAt}
 let listingAssistantSessions = []; // Array of {id, title, history, createdAt, updatedAt}
 let currentChatbotSessionId = null;
 let currentListingAssistantSessionId = null;
+let initializationComplete = false; // Prevent multiple init() calls
 
 // --- LOCALSTORAGE FUNCTIONS ---
 const Storage = {
@@ -159,27 +160,27 @@ function switchListingAssistantSession(sessionId) {
                 <div class="listing-welcome-card">
                     <div class="listing-welcome-icon">🚗</div>
                     <h3 class="text-xl font-bold mb-2">Welcome to Listing Assistant</h3>
-                    <p class="text-gray-400 mb-4">I can help you create and manage car listings through conversation.</p>
+                    <p class="text-gray-600 mb-4">I can help you create and manage car listings through conversation.</p>
                     <div class="listing-features-grid">
                         <div class="listing-feature-card">
                             <div class="feature-icon">➕</div>
                             <h4 class="font-semibold">Create Listings</h4>
-                            <p class="text-sm text-gray-400">Add new car listings by chatting</p>
+                            <p class="text-sm text-gray-600">Add new car listings by chatting</p>
                         </div>
                         <div class="listing-feature-card">
                             <div class="feature-icon">💰</div>
                             <h4 class="font-semibold">Price Suggestions</h4>
-                            <p class="text-sm text-gray-400">Get market-based pricing advice</p>
+                            <p class="text-sm text-gray-600">Get market-based pricing advice</p>
                         </div>
                         <div class="listing-feature-card">
                             <div class="feature-icon">✏️</div>
                             <h4 class="font-semibold">Edit Listings</h4>
-                            <p class="text-sm text-gray-400">Update existing listings easily</p>
+                            <p class="text-sm text-gray-600">Update existing listings easily</p>
                         </div>
                         <div class="listing-feature-card">
                             <div class="feature-icon">💬</div>
                             <h4 class="font-semibold">Ask Questions</h4>
-                            <p class="text-sm text-gray-400">Get help with listing requirements</p>
+                            <p class="text-sm text-gray-600">Get help with listing requirements</p>
                         </div>
                     </div>
                 </div>
@@ -280,7 +281,7 @@ function renderChatbotChatList() {
     if (!DOM.chatbotChatList) return;
     
     if (chatbotSessions.length === 0) {
-        DOM.chatbotChatList.innerHTML = '<p class="text-gray-400 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
+        DOM.chatbotChatList.innerHTML = '<p class="text-gray-600 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
         return;
     }
     
@@ -326,7 +327,7 @@ function renderListingAssistantChatList() {
     if (!DOM.listingAssistantChatList) return;
     
     if (listingAssistantSessions.length === 0) {
-        DOM.listingAssistantChatList.innerHTML = '<p class="text-gray-400 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
+        DOM.listingAssistantChatList.innerHTML = '<p class="text-gray-600 text-sm text-center p-4">No chats yet. Start a new chat!</p>';
         return;
     }
     
@@ -378,6 +379,11 @@ async function fetchCarData() {
             allCars = response.cars || [];
             return allCars;
         } else {
+            // Don't throw on 401, just log and return empty
+            if (response.statusCode === 401) {
+                console.warn('Unauthorized: session may have expired');
+                return [];
+            }
             throw new Error(response.error || 'Failed to fetch cars');
         }
     } catch (error) {
@@ -399,6 +405,12 @@ async function fetchFavorites() {
             console.log(`Fetched ${favorites.length} favorites from server`);
             return favorites;
         } else {
+            // Don't redirect on 401, just fall back to localStorage
+            if (response.statusCode === 401) {
+                console.warn('Unauthorized: using local favorites');
+                favorites = Storage.getFavorites();
+                return favorites;
+            }
             console.warn('Failed to fetch favorites from server:', response.error);
             // Fallback to localStorage only if API fails
             favorites = Storage.getFavorites();
@@ -705,32 +717,37 @@ async function handleDeleteCar(carId) {
 async function checkAuthentication() {
     const token = getAuthToken();
     if (!token) {
+        console.log('No auth token found');
+        isAuthenticated = false;
+        currentUser = null;
         return false;
     }
     
     try {
+        console.log('Verifying auth token...');
         const response = await verifyAuth();
-        if (response.success && response.authenticated) {
+        
+        if (response && response.success && response.authenticated) {
+            console.log('Auth verification successful, user:', response.user?.username);
             isAuthenticated = true;
             currentUser = response.user;
             setUserData(response.user);
-            updateAuthUI();
             return true;
         } else {
+            // Token is invalid or expired
+            console.log('Auth verification failed:', response?.error);
             setAuthToken(null);
             setUserData(null);
             isAuthenticated = false;
             currentUser = null;
-            updateAuthUI();
             return false;
         }
     } catch (error) {
-        console.error('Auth check failed:', error);
+        console.error('Auth check error:', error);
         setAuthToken(null);
         setUserData(null);
         isAuthenticated = false;
         currentUser = null;
-        updateAuthUI();
         return false;
     }
 }
@@ -1184,7 +1201,7 @@ async function renderAnalyticsPage(filter = 'all') {
         container.innerHTML = `
             <div class="loading-container">
                 <div class="spinner"></div>
-                <p class="text-gray-400 mt-4">Analyzing data...</p>
+                <p class="text-gray-600 mt-4">Analyzing data...</p>
             </div>
         `;
         
@@ -1211,16 +1228,16 @@ async function renderAnalyticsPage(filter = 'all') {
         container.innerHTML = `
             <div class="space-y-6">
                 ${filterType !== 'all' ? `
-                <div class="analytics-card bg-gradient-to-r from-blue-600 to-purple-600">
-                    <h3 class="text-lg font-bold text-white mb-2">📊 Personal Statistics</h3>
+                <div class="analytics-card" style="background: linear-gradient(135deg, #2563eb, #1e40af); padding: 1.5rem; border-radius: 12px;">
+                    <h3 class="text-lg font-bold mb-2" style="color: #ffffff;">📊 Personal Statistics</h3>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <p class="text-sm text-blue-100">My Listings</p>
-                            <p class="text-2xl font-bold text-white">${userStats.my_listings || 0}</p>
+                            <p class="text-sm mb-2" style="color: rgba(255,255,255,0.8);">My Listings</p>
+                            <p class="text-2xl font-bold" style="color: #ffffff;">${userStats.my_listings || 0}</p>
                         </div>
                         <div>
-                            <p class="text-sm text-blue-100">My Favorites</p>
-                            <p class="text-2xl font-bold text-white">${userStats.favorites || 0}</p>
+                            <p class="text-sm mb-2" style="color: rgba(255,255,255,0.8);">My Favorites</p>
+                            <p class="text-2xl font-bold" style="color: #ffffff;">${userStats.favorites || 0}</p>
                         </div>
                     </div>
                 </div>
@@ -1229,38 +1246,38 @@ async function renderAnalyticsPage(filter = 'all') {
                 <!-- Summary Cards -->
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div class="analytics-card interactive-card" data-metric="total">
-                        <h3 class="text-sm text-gray-400 mb-1">Total Cars</h3>
-                        <p class="text-3xl font-bold text-white">${insights.summary.total_cars}</p>
-                        <p class="text-xs text-gray-500 mt-1">${filterLabel}</p>
+                        <h3 class="text-sm mb-1" style="color: #6b7280;">Total Cars</h3>
+                        <p class="text-3xl font-bold" style="color: #2563eb;">${insights.summary.total_cars}</p>
+                        <p class="text-xs mt-1" style="color: #9ca3af;">${filterLabel}</p>
                     </div>
                     <div class="analytics-card interactive-card" data-metric="makes">
-                        <h3 class="text-sm text-gray-400 mb-1">Total Makes</h3>
-                        <p class="text-3xl font-bold text-white">${insights.summary.total_makes}</p>
-                        <p class="text-xs text-gray-500 mt-1">Unique brands</p>
+                        <h3 class="text-sm mb-1" style="color: #6b7280;">Total Makes</h3>
+                        <p class="text-3xl font-bold" style="color: #2563eb;">${insights.summary.total_makes}</p>
+                        <p class="text-xs mt-1" style="color: #9ca3af;">Unique brands</p>
                     </div>
                     <div class="analytics-card interactive-card" data-metric="price">
-                        <h3 class="text-sm text-gray-400 mb-1">Avg Price</h3>
-                        <p class="text-3xl font-bold text-white">${new Intl.NumberFormat().format(Math.round(insights.summary.average_price))}</p>
-                        <p class="text-xs text-gray-500 mt-1">Range: ${new Intl.NumberFormat().format(Math.round(insights.summary.min_price))} - ${new Intl.NumberFormat().format(Math.round(insights.summary.max_price))}</p>
+                        <h3 class="text-sm mb-1" style="color: #6b7280;">Avg Price</h3>
+                        <p class="text-3xl font-bold" style="color: #2563eb;">${new Intl.NumberFormat().format(Math.round(insights.summary.average_price))}</p>
+                        <p class="text-xs mt-1" style="color: #9ca3af;">Range: ${new Intl.NumberFormat().format(Math.round(insights.summary.min_price))} - ${new Intl.NumberFormat().format(Math.round(insights.summary.max_price))}</p>
                     </div>
                     <div class="analytics-card interactive-card" data-metric="rating">
-                        <h3 class="text-sm text-gray-400 mb-1">Avg Rating</h3>
-                        <p class="text-3xl font-bold text-white">${insights.summary.average_rating.toFixed(1)} ⭐</p>
-                        <p class="text-xs text-gray-500 mt-1">Out of 5.0</p>
+                        <h3 class="text-sm mb-1" style="color: #6b7280;">Avg Rating</h3>
+                        <p class="text-3xl font-bold" style="color: #2563eb;">${insights.summary.average_rating.toFixed(1)} ⭐</p>
+                        <p class="text-xs mt-1" style="color: #9ca3af;">Out of 5.0</p>
                     </div>
                 </div>
                 
                 <!-- AI Insights -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">🤖 AI-Powered Insights</h2>
-                    <div class="prose prose-invert max-w-none">
-                        <div class="text-gray-300 whitespace-pre-line">${insights.ai_insights || 'AI insights unavailable'}</div>
+                    <h2 class="text-2xl font-bold mb-4" style="color: #111827;">🤖 AI-Powered Insights</h2>
+                    <div class="prose max-w-none">
+                        <div style="color: #4b5563; white-space: pre-line;">${insights.ai_insights || 'AI insights unavailable'}</div>
                     </div>
                 </div>
                 
                 <!-- Top Makes with Interactive Bars -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">📈 Top Makes Distribution</h2>
+                    <h2 class="text-2xl font-bold mb-4" style="color: #111827;">📈 Top Makes Distribution</h2>
                     <div class="space-y-3">
                         ${insights.top_makes.map((item, index) => {
                             const maxCount = Math.max(...insights.top_makes.map(m => m.count));
@@ -1268,11 +1285,11 @@ async function renderAnalyticsPage(filter = 'all') {
                             return `
                             <div class="analytics-bar-item">
                                 <div class="flex items-center justify-between mb-1">
-                                    <span class="text-white font-semibold">${index + 1}. ${item.make}</span>
-                                    <span class="text-blue-400 font-bold">${item.count} cars</span>
+                                    <span style="color: #111827; font-weight: 600;">${index + 1}. ${item.make}</span>
+                                    <span style="color: #2563eb; font-weight: bold;">${item.count} cars</span>
                                 </div>
-                                <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
-                                    <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                                <div class="w-full rounded-full h-2 overflow-hidden" style="background-color: #e5e7eb;">
+                                    <div style="background: linear-gradient(90deg, #2563eb, #60a5fa); height: 8px; border-radius: 9999px; width: ${percentage}%; transition: width 500ms ease;" class="h-2 rounded-full"></div>
                                 </div>
                             </div>
                         `;
@@ -1282,7 +1299,7 @@ async function renderAnalyticsPage(filter = 'all') {
                 
                 <!-- Price Distribution with Interactive Bars -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">💰 Price Distribution</h2>
+                    <h2 class="text-2xl font-bold mb-4" style="color: #111827;">💰 Price Distribution</h2>
                     <div class="space-y-3">
                         ${Object.entries(insights.price_distribution).map(([range, count]) => {
                             const maxCount = Math.max(...Object.values(insights.price_distribution));
@@ -1290,11 +1307,11 @@ async function renderAnalyticsPage(filter = 'all') {
                             return `
                             <div class="analytics-bar-item">
                                 <div class="flex items-center justify-between mb-1">
-                                    <span class="text-white">${range}</span>
-                                    <span class="text-blue-400 font-bold">${count} cars</span>
+                                    <span style="color: #111827;">${range}</span>
+                                    <span style="color: #2563eb; font-weight: bold;">${count} cars</span>
                                 </div>
-                                <div class="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
-                                    <div class="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500" style="width: ${percentage}%"></div>
+                                <div class="w-full rounded-full h-2 overflow-hidden" style="background-color: #e5e7eb;">
+                                    <div style="background: linear-gradient(90deg, #10b981, #2563eb); height: 8px; border-radius: 9999px; width: ${percentage}%; transition: width 500ms ease;" class="h-2 rounded-full"></div>
                                 </div>
                             </div>
                         `;
@@ -1304,15 +1321,15 @@ async function renderAnalyticsPage(filter = 'all') {
                 
                 <!-- Top Rated Cars -->
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-4">Top Rated Cars</h2>
+                    <h2 class="text-2xl font-bold mb-4" style="color: #111827;">Top Rated Cars</h2>
                     <div class="space-y-2">
                         ${insights.top_rated_cars.map((car, index) => `
-                            <div class="flex items-center justify-between p-3 bg-gray-800 bg-opacity-50 rounded-lg hover:bg-opacity-70 cursor-pointer" data-car-id="${car.id}">
+                            <div class="flex items-center justify-between p-3 rounded-lg hover:bg-opacity-70 cursor-pointer transition-colors" style="background-color: #f9fafb; color: #111827;" data-car-id="${car.id}">
                                 <div>
-                                    <span class="text-white font-semibold">${index + 1}. ${car.make} ${car.model}</span>
-                                    <span class="text-yellow-400 ml-2">⭐ ${car.rating.toFixed(1)}</span>
+                                    <span style="color: #111827; font-weight: 600;">${index + 1}. ${car.make} ${car.model}</span>
+                                    <span style="color: #f59e0b; margin-left: 8px;">⭐ ${car.rating.toFixed(1)}</span>
                                 </div>
-                                <span class="text-blue-400 font-bold">${new Intl.NumberFormat().format(car.price)}</span>
+                                <span style="color: #2563eb; font-weight: bold;">${new Intl.NumberFormat().format(car.price)}</span>
                             </div>
                         `).join('')}
                     </div>
@@ -1340,10 +1357,10 @@ async function renderAnalyticsPage(filter = 'all') {
         const container = document.getElementById('analytics-container');
         if (container) {
             container.innerHTML = `
-                <div class="error-container">
-                    <div class="error-icon">⚠️</div>
-                    <h3 class="text-xl font-bold text-white mb-2">Failed to Load Analytics</h3>
-                    <p class="text-gray-400">${error.message || 'An error occurred'}</p>
+                <div class="error-container" style="text-align: center; padding: 3rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+                    <h3 class="text-xl font-bold mb-2" style="color: #111827;">Failed to Load Analytics</h3>
+                    <p style="color: #6b7280;">${error.message || 'An error occurred'}</p>
                 </div>
             `;
         }
@@ -1381,7 +1398,7 @@ async function renderProfileContent(container) {
         container.innerHTML = `
             <div class="loading-container">
                 <div class="spinner"></div>
-                <p class="text-gray-400 mt-4">Loading profile...</p>
+                <p class="text-gray-600 mt-4">Loading profile...</p>
             </div>
         `;
         
@@ -1402,12 +1419,12 @@ async function renderProfileContent(container) {
         container.innerHTML = `
             <div class="space-y-6">
                 <div class="analytics-card">
-                    <h2 class="text-2xl font-bold text-white mb-2">👤 Profile Management</h2>
-                    <p class="text-gray-400 mb-6">Update your account information and password</p>
+                    <h2 class="text-2xl font-bold text-gray-900 mb-2">👤 Profile Management</h2>
+                    <p class="text-gray-600 mb-6">Update your account information and password</p>
                     <form id="profile-form" class="space-y-6">
                         <!-- Username Section -->
                         <div class="space-y-2">
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
                                 <span class="flex items-center gap-2">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
@@ -1421,7 +1438,7 @@ async function renderProfileContent(container) {
                         
                         <!-- Email Section -->
                         <div class="space-y-2">
-                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
                                 <span class="flex items-center gap-2">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
@@ -1434,27 +1451,27 @@ async function renderProfileContent(container) {
                         </div>
                         
                         <!-- Password Change Section -->
-                        <div class="pt-4 border-t border-gray-700">
-                            <h3 class="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                        <div class="pt-4 border-t border-gray-300">
+                            <h3 class="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                                 </svg>
                                 Change Password
                             </h3>
-                            <p class="text-sm text-gray-400 mb-4">Leave password fields blank if you don't want to change your password</p>
+                            <p class="text-sm text-gray-600 mb-4">Leave password fields blank if you don't want to change your password</p>
                             <div class="space-y-4">
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Current Password *</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Current Password *</label>
                                     <input type="password" id="profile-current-password" name="current_password" class="form-input" placeholder="Enter your current password" autocomplete="current-password">
                                     <p class="text-xs text-gray-500 mt-1">Required only if changing password</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">New Password</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">New Password</label>
                                     <input type="password" id="profile-password" name="password" class="form-input" placeholder="Enter new password (minimum 6 characters)" autocomplete="new-password" minlength="6">
                                     <p class="text-xs text-gray-500 mt-1">Must be at least 6 characters long</p>
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Confirm New Password</label>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Confirm New Password</label>
                                     <input type="password" id="profile-password-confirm" name="password_confirm" class="form-input" placeholder="Confirm your new password" autocomplete="new-password" minlength="6">
                                     <p class="text-xs text-gray-500 mt-1" id="password-match-message"></p>
                                 </div>
@@ -1462,24 +1479,24 @@ async function renderProfileContent(container) {
                         </div>
                         
                         <!-- Account Info Section -->
-                        <div class="pt-4 border-t border-gray-700">
-                            <h3 class="text-lg font-bold text-white mb-4">Account Information</h3>
+                        <div class="pt-4 border-t border-gray-300">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">Account Information</h3>
                             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                <div class="bg-gray-800 bg-opacity-50 p-3 rounded-lg">
-                                    <p class="text-gray-400 mb-1">Account Created</p>
-                                    <p class="text-white font-semibold">${createdDate}</p>
+                                <div class="bg-gray-100 bg-opacity-50 p-3 rounded-lg">
+                                    <p class="text-gray-600 mb-1">Account Created</p>
+                                    <p class="text-gray-900 font-semibold">${createdDate}</p>
                                 </div>
-                                <div class="bg-gray-800 bg-opacity-50 p-3 rounded-lg">
-                                    <p class="text-gray-400 mb-1">Last Login</p>
-                                    <p class="text-white font-semibold">${lastLogin}</p>
+                                <div class="bg-gray-100 bg-opacity-50 p-3 rounded-lg">
+                                    <p class="text-gray-600 mb-1">Last Login</p>
+                                    <p class="text-gray-900 font-semibold">${lastLogin}</p>
                                 </div>
                             </div>
                         </div>
                         
                         <!-- Action Buttons -->
-                        <div class="flex justify-end gap-3 pt-4 border-t border-gray-700">
-                            <button type="button" id="profile-cancel-btn" class="bg-gray-600 text-white py-2 px-6 rounded-lg hover:bg-gray-700 transition-colors">Reset</button>
-                            <button type="submit" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors font-semibold">Save Changes</button>
+                        <div class="flex justify-end gap-3 pt-4 border-t border-gray-300">
+                            <button type="button" id="profile-cancel-btn" class="bg-gray-100 text-gray-900 py-2 px-6 rounded-lg hover:bg-gray-100 transition-colors">Reset</button>
+                            <button type="submit" class="bg-blue-600 text-gray-900 py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors font-semibold">Save Changes</button>
                         </div>
                     </form>
                     <div id="profile-error" class="hidden mt-4 p-4 bg-red-900 bg-opacity-50 border border-red-500 rounded-lg text-red-200"></div>
@@ -1540,19 +1557,17 @@ async function renderProfileContent(container) {
         console.error('Error rendering profile:', error);
         if (container) {
             container.innerHTML = `
-                <div class="analytics-card">
-                    <div class="text-center py-8">
-                        <div class="text-6xl mb-4">⚠️</div>
-                        <h3 class="text-xl font-bold text-white mb-2">Failed to Load Profile</h3>
-                        <p class="text-gray-400 mb-4">${error.message || 'An error occurred while loading your profile'}</p>
-                        <div class="flex gap-3 justify-center">
-                            <button onclick="window.renderProfilePage && window.renderProfilePage()" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
-                                Retry
-                            </button>
-                            <button onclick="location.reload()" class="bg-gray-600 text-white py-2 px-6 rounded-lg hover:bg-gray-700 transition-colors">
-                                Reload Page
-                            </button>
-                        </div>
+                <div class="analytics-card" style="text-align: center; padding: 2rem;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
+                    <h3 class="text-xl font-bold mb-2" style="color: #111827;">Failed to Load Profile</h3>
+                    <p style="color: #6b7280; margin-bottom: 1rem;">${error.message || 'An error occurred while loading your profile'}</p>
+                    <div style="display: flex; gap: 12px; justify-content: center;">
+                        <button onclick="window.renderProfilePage && window.renderProfilePage()" style="background-color: #2563eb; color: white; padding: 8px 24px; border-radius: 8px; border: none; cursor: pointer; transition: background-color 0.3s;" onmouseover="this.style.backgroundColor='#1e40af'" onmouseout="this.style.backgroundColor='#2563eb'">
+                            Retry
+                        </button>
+                        <button onclick="location.reload()" style="background-color: #6b7280; color: white; padding: 8px 24px; border-radius: 8px; border: none; cursor: pointer; transition: background-color 0.3s;" onmouseover="this.style.backgroundColor='#4b5563'" onmouseout="this.style.backgroundColor='#6b7280'">
+                            Reload Page
+                        </button>
                     </div>
                 </div>
             `;
@@ -1698,11 +1713,11 @@ async function renderMyListingsPage() {
             const myCars = response.cars || [];
             if (myCars.length === 0) {
                 DOM.myListingsContainer.innerHTML = `
-                    <div class="text-center py-12">
-                        <div class="text-6xl mb-4">🚗</div>
-                        <h3 class="text-xl font-bold text-white mb-2">No Listings Yet</h3>
-                        <p class="text-gray-400 mb-6">You haven't created any listings yet. Start by adding your first car!</p>
-                        <button id="go-to-add-listing" class="bg-blue-600 text-white py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                    <div style="text-align: center; padding: 3rem 0;">
+                        <div style="font-size: 3rem; margin-bottom: 1rem;">🚗</div>
+                        <h3 class="text-xl font-bold mb-2" style="color: #111827;">No Listings Yet</h3>
+                        <p style="color: #6b7280; margin-bottom: 1.5rem;">You haven't created any listings yet. Start by adding your first car!</p>
+                        <button id="go-to-add-listing" style="background-color: #2563eb; color: white; padding: 8px 24px; border-radius: 8px; border: none; cursor: pointer; transition: background-color 0.3s; font-weight: 500;" onmouseover="this.style.backgroundColor='#1e40af'" onmouseout="this.style.backgroundColor='#2563eb'">
                             Add Your First Listing
                         </button>
                     </div>
@@ -2182,6 +2197,7 @@ function debounce(func, wait) {
 async function initApp() {
     // Load favorites from server first (user-specific)
     try {
+        console.log('Loading favorites from server...');
         favorites = await fetchFavorites();
         console.log(`Loaded ${favorites.length} favorites from server`);
     } catch (error) {
@@ -2191,6 +2207,7 @@ async function initApp() {
     
     // Load makes for filter
     try {
+        console.log('Loading car makes...');
         await loadMakes();
     } catch (error) {
         console.error('Failed to load makes:', error);
@@ -2198,6 +2215,7 @@ async function initApp() {
     
     // Load initial car data
     try {
+        console.log('Loading car listings...');
         const cars = await fetchCarData();
         console.log(`Loaded ${cars.length} cars`);
         
@@ -2205,18 +2223,32 @@ async function initApp() {
             // Render cars with favorites loaded
             applyFiltersAndRender();
             // Load reviews page
-            await renderReviewsPage();
+            try {
+                await renderReviewsPage();
+            } catch (e) {
+                console.error('Failed to load reviews:', e);
+            }
         } else {
             console.warn('No cars found in database');
-            showError(DOM.listingsContainer, 'No cars found. Please run the data ingestion script: python ingest_excel_to_db.py');
+            if (DOM.listingsContainer) {
+                showError(DOM.listingsContainer, 'No cars found. Please run the data ingestion script: python ingest_excel_to_db.py');
+            }
         }
     } catch (error) {
         console.error('Failed to load cars:', error);
-        showError(DOM.listingsContainer, `Failed to load cars: ${error.message}`);
+        if (DOM.listingsContainer) {
+            showError(DOM.listingsContainer, `Failed to load cars: ${error.message}`);
+        }
     }
 }
 
 async function init() {
+    // Prevent multiple initializations
+    if (initializationComplete) {
+        console.log('Initialization already complete, skipping...');
+        return;
+    }
+    
     console.log('🚀 IntelliWheels Initializing...');
     
     // Wait for DOM to be fully ready
@@ -2285,12 +2317,16 @@ async function init() {
     setupEventListeners();
     createParticles();
     
-    // Check authentication first
+    // Check authentication - this won't modify UI
+    console.log('Checking authentication...');
     const authenticated = await checkAuthentication();
+    console.log('Authentication result:', authenticated);
+    
+    // Update UI based on auth state
+    updateAuthUI();
     
     if (authenticated) {
         // User is authenticated, show main app
-        updateAuthUI();
         showPage('listings');
         
         // Clear any old localStorage favorites (they might be from a different user or outdated)
@@ -2316,54 +2352,17 @@ async function init() {
         console.log('✅ IntelliWheels Ready!');
     } else {
         // User not authenticated, show login page
-        updateAuthUI();
         showPage('login');
         console.log('🔒 Please login to access IntelliWheels');
     }
+    
+    // Mark initialization as complete
+    initializationComplete = true;
 }
 
 // Make functions available globally
 window.showCarInfoModal = showCarInfoModal;
 window.showPage = showPage;
-
-// --- THEME TOGGLE (DARK/LIGHT MODE) ---
-function applyTheme(theme) {
-    const body = document.body;
-    const sunIcon = document.getElementById('theme-icon-sun');
-    const moonIcon = document.getElementById('theme-icon-moon');
-    if (theme === 'dark') {
-        body.classList.add('dark-theme');
-        if (sunIcon && moonIcon) { sunIcon.style.display = 'none'; moonIcon.style.display = 'block'; }
-    } else {
-        body.classList.remove('dark-theme');
-        if (sunIcon && moonIcon) { sunIcon.style.display = 'block'; moonIcon.style.display = 'none'; }
-    }
-}
-
-function getPreferredTheme() {
-    // Priority: localStorage > prefers-color-scheme
-    const stored = localStorage.getItem('theme');
-    if (stored) return stored;
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-    return 'light';
-}
-
-function setupThemeToggle() {
-    const btn = document.getElementById('theme-toggle-btn');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-        const current = document.body.classList.contains('dark-theme') ? 'dark' : 'light';
-        const newTheme = current === 'dark' ? 'light' : 'dark';
-        localStorage.setItem('theme', newTheme);
-        applyTheme(newTheme);
-    });
-}
-
-// At top-level app init (before anything else):
-document.addEventListener('DOMContentLoaded', () => {
-    applyTheme(getPreferredTheme());
-    setupThemeToggle();
-});
 
 // Start initialization
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -2373,3 +2372,4 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
     console.log('Waiting for DOMContentLoaded...');
     document.addEventListener('DOMContentLoaded', init);
 }
+

@@ -89,20 +89,26 @@ async function apiRequest(endpoint, options = {}, signal = null) {
                 errorData = { error: errorText || `HTTP error! status: ${response.status}` };
             }
             
-            // Handle authentication errors
+            // Handle authentication errors (only clear on explicit auth endpoint)
             if (response.status === 401) {
-                // Clear auth data and redirect to login
-                setAuthToken(null);
-                setUserData(null);
-                if (window.location.pathname !== '/') {
-                    window.location.href = '/';
+                // Only clear auth on /auth/verify endpoint
+                if (endpoint.includes('/auth/verify')) {
+                    setAuthToken(null);
+                    setUserData(null);
                 }
+                // Return the error so it can be handled gracefully
+                return {
+                    success: false,
+                    error: 'Unauthorized',
+                    statusCode: 401
+                };
             }
             
             // Return error response with proper structure
             return {
                 success: false,
-                error: errorData.error || errorData.message || errorText || `HTTP error! status: ${response.status}`
+                error: errorData.error || errorData.message || errorText || `HTTP error! status: ${response.status}`,
+                statusCode: response.status
             };
         }
         
