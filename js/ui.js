@@ -11,8 +11,7 @@ function initializeDOM() {
             favorites: document.getElementById('nav-favorites'),
             myListings: document.getElementById('nav-my-listings'),
             profile: document.getElementById('nav-profile'),
-            chatbot: document.getElementById('nav-chatbot'),
-            listingAssistant: document.getElementById('nav-listing-assistant'),
+            aiAssistant: document.getElementById('nav-ai-assistant'),
             analytics: document.getElementById('nav-analytics'),
             addListing: document.getElementById('nav-add-listing'),
         },
@@ -25,8 +24,7 @@ function initializeDOM() {
             favorites: document.getElementById('page-favorites'),
             myListings: document.getElementById('page-my-listings'),
             profile: document.getElementById('page-profile'),
-            chatbot: document.getElementById('page-chatbot'),
-            listingAssistant: document.getElementById('page-listing-assistant'),
+            aiAssistant: document.getElementById('page-ai-assistant'),
             analytics: document.getElementById('page-analytics'),
             addListing: document.getElementById('page-add-listing'),
         },
@@ -52,19 +50,12 @@ function initializeDOM() {
         myListingsContainer: document.getElementById('my-listings-container'),
         // "Add Listing" Form
         addListingForm: document.getElementById('add-listing-form'),
-        // Chatbot UI
-        chatbotLog: document.getElementById('chatbot-log-fullscreen'),
-        chatbotInput: document.getElementById('chatbot-input-fullscreen'),
-        chatbotSendBtn: document.getElementById('chatbot-send-btn-fullscreen'),
-        // Listing Assistant UI
-        listingAssistantConversation: document.getElementById('listing-assistant-conversation'),
-        listingAssistantInput: document.getElementById('listing-assistant-input'),
-        listingAssistantSendBtn: document.getElementById('listing-assistant-send-btn'),
-        listingAssistantNewChatBtn: document.getElementById('listing-assistant-new-chat-btn'),
-        listingAssistantChatList: document.getElementById('listing-assistant-chat-list'),
-        // Chatbot New Chat Button
-        chatbotNewChatBtn: document.getElementById('chatbot-new-chat-btn'),
-        chatbotChatList: document.getElementById('chatbot-chat-list'),
+        // AI Assistant UI (consolidated from chatbot & listing-assistant)
+        aiAssistantLog: document.getElementById('ai-assistant-log'),
+        aiAssistantInput: document.getElementById('ai-assistant-input'),
+        aiAssistantSendBtn: document.getElementById('ai-assistant-send-btn'),
+        aiAssistantNewChatBtn: document.getElementById('ai-assistant-new-chat-btn'),
+        aiAssistantChatList: document.getElementById('ai-assistant-chat-list'),
         // Car Details Modal
         carInfoModal: document.getElementById('car-info-modal'),
         carInfoContent: document.getElementById('car-info-content'),

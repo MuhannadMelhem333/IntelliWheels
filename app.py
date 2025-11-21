@@ -48,8 +48,12 @@ if SWAGGER_AVAILABLE:
 # Database configuration
 DB_PATH = 'intelliwheels.db'
 
-# In-memory conversation store per session
-CHAT_SESSIONS = {}
+# In-memory conversation store - unified for all assistants
+SESSION_STORE = {}  # {session_id: {conversation_history, context, created_at, updated_at, mode}}
+
+# Cleanup old sessions periodically
+LAST_CLEANUP = time.time()
+SESSION_TIMEOUT = 86400  # 24 hours
 
 # In-memory session store for authentication
 AUTH_SESSIONS = {}  # {token: {user_id, username, created_at}}
@@ -1070,40 +1074,45 @@ def remove_favorite(car_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def detect_user_intent(query):
-    """Detect user intent from query"""
+    """Detect user intent from query with confidence level"""
     query_lower = query.lower()
+    
+    # Listing/selling intent
+    listing_keywords = ['sell', 'create listing', 'add my car', 'list my', 'want to sell', 'put up for sale', 'post', 'auction']
+    if any(kw in query_lower for kw in listing_keywords):
+        return {'intent': 'listing', 'confidence': 0.95, 'entities': {}}
     
     # Buying intent
     buying_keywords = ['buy', 'purchase', 'looking for', 'want', 'need', 'interested in', 'shopping for', 'considering']
     if any(kw in query_lower for kw in buying_keywords):
-        return 'buying'
+        return {'intent': 'buying', 'confidence': 0.90, 'entities': {}}
+    
+    # Negotiating intent
+    negotiating_keywords = ['discount', 'deal', 'negotiate', 'best price', 'lower price', 'cheaper', 'offer', 'bargain', 'haggle']
+    if any(kw in query_lower for kw in negotiating_keywords):
+        return {'intent': 'negotiation', 'confidence': 0.85, 'entities': {}}
     
     # Comparing intent
     comparing_keywords = ['compare', 'vs', 'versus', 'difference', 'better', 'which is', 'between']
     if any(kw in query_lower for kw in comparing_keywords):
-        return 'comparing'
-    
-    # Negotiating intent
-    negotiating_keywords = ['discount', 'deal', 'negotiate', 'best price', 'lower price', 'cheaper', 'offer', 'bargain']
-    if any(kw in query_lower for kw in negotiating_keywords):
-        return 'negotiating'
+        return {'intent': 'comparison', 'confidence': 0.88, 'entities': {}}
     
     # Price inquiry
-    price_keywords = ['price', 'cost', 'how much', 'expensive', 'affordable', 'budget']
+    price_keywords = ['price', 'cost', 'how much', 'expensive', 'affordable', 'budget', 'worth']
     if any(kw in query_lower for kw in price_keywords):
-        return 'price_inquiry'
+        return {'intent': 'pricing', 'confidence': 0.80, 'entities': {}}
     
-    # Feature inquiry
-    feature_keywords = ['spec', 'feature', 'engine', 'horsepower', 'fuel', 'mileage', 'safety', 'rating']
+    # Feature/spec inquiry
+    feature_keywords = ['spec', 'feature', 'engine', 'horsepower', 'fuel', 'mileage', 'safety', 'rating', 'performance']
     if any(kw in query_lower for kw in feature_keywords):
-        return 'feature_inquiry'
+        return {'intent': 'specifications', 'confidence': 0.82, 'entities': {}}
     
     # Recommendation
-    recommendation_keywords = ['recommend', 'suggest', 'best', 'good', 'top', 'popular']
+    recommendation_keywords = ['recommend', 'suggest', 'best', 'good', 'top', 'popular', 'reliable']
     if any(kw in query_lower for kw in recommendation_keywords):
-        return 'recommendation'
+        return {'intent': 'recommendation', 'confidence': 0.75, 'entities': {}}
     
-    return 'general'
+    return {'intent': 'general', 'confidence': 0.5, 'entities': {}}
 
 def query_cars_intelligently(query, intent, detected_currency=None):
     """Intelligently query cars from database based on query and intent"""
@@ -1214,6 +1223,111 @@ def query_cars_intelligently(query, intent, detected_currency=None):
         conn.close()
         return []
 
+# System Prompt Builders for Unified AI Assistant
+def build_general_system_prompt(cars, user_context, language='English'):
+    """Build system prompt for general chatbot mode"""
+    cars_context = "\n".join([f"• {c.get('make')} {c.get('model')} ({c.get('year')}) - {c.get('price')} {c.get('currency')} | Rating: {c.get('rating', 0)}/5 stars" for c in cars[:12]])
+    
+    prompt = f"""You are IntelliWheels, a professional AI automotive assistant for a car marketplace. 
+Your role is to help users find cars, answer questions about specifications, compare vehicles, and provide market insights.
+
+AVAILABLE CARS IN CATALOG:
+{cars_context}
+
+USER CONTEXT:
+- Favorites saved: {user_context.get('favorites_count', 0)}
+- Listings created: {user_context.get('listings_count', 0)}
+- Preferred language: {language}
+
+INSTRUCTIONS:
+1. Provide accurate, helpful information about cars in the catalog
+2. Answer comparison questions by highlighting key differences
+3. Give pricing insights and market analysis when asked
+4. If user mentions interest in creating/selling, suggest listing assistant
+5. Be professional, concise, and helpful
+6. Support both English and Arabic responses based on user language
+7. When appropriate, recommend specific cars from the catalog
+8. Provide safety and reliability information when asked
+9. DO NOT make up car specifications - only use data from our catalog
+10. If a car is not in catalog, apologize and suggest alternatives"""
+    
+    return prompt
+
+def build_listing_system_prompt(cars, user_context, language='English'):
+    """Build system prompt for listing creation/editing mode"""
+    cars_context = "\n".join([f"• {c.get('make')} {c.get('model')} ({c.get('year')}) - {c.get('price')} {c.get('currency')}" for c in cars[:20]])
+    
+    prompt = f"""You are IntelliWheels Listing Assistant, an AI expert in creating compelling car listings and pricing.
+Your role is to help users create, edit, or optimize their car listings for maximum appeal and fair pricing.
+
+MARKET REFERENCE CARS:
+{cars_context}
+
+USER CONTEXT:
+- Current listings: {user_context.get('listings_count', 0)}
+- Market experience: {user_context.get('listings_count', 0)} listings
+- Preferred language: {language}
+
+LISTING CREATION PROCESS:
+1. Ask clarifying questions about the car (make, model, year, condition, mileage, price, images)
+2. Provide market-based pricing suggestions based on similar cars
+3. Generate compelling description highlighting key features
+4. Suggest optimal pricing based on market data
+5. Help with listing optimization tips
+
+RESPONSE FORMAT:
+- Start with acknowledgment of their car details
+- Provide pricing recommendation with market analysis
+- Suggest 2-3 key features to highlight
+- When ready, provide JSON format:
+{{"make": "Toyota", "model": "Camry", "year": 2020, "price": 75000, "currency": "AED", "specs": {{"engine": "2.5L V6", "transmission": "Automatic"}}}}
+
+IMPORTANT:
+- Only extract structured data when user provides complete details
+- Always provide market-based pricing justification
+- Be honest about competitive pricing
+- Support multilingual responses"""
+    
+    return prompt
+
+def build_negotiation_system_prompt(cars, user_context, language='English'):
+    """Build system prompt for negotiation/pricing mode"""
+    price_stats = []
+    if cars:
+        prices = [c.get('price') for c in cars if c.get('price')]
+        if prices:
+            avg_price = sum(prices) / len(prices)
+            price_stats = [f"Average price: {avg_price:.0f}", f"Min price: {min(prices)}", f"Max price: {max(prices)}"]
+    
+    stats_context = "\n".join(price_stats) if price_stats else "Market data available upon analysis"
+    
+    prompt = f"""You are IntelliWheels Negotiation Coach, an AI expert in fair pricing and market analysis.
+Your role is to help buyers and sellers understand fair market prices and negotiation strategies.
+
+MARKET STATISTICS:
+{stats_context}
+
+NEGOTIATION SUPPORT:
+1. Analyze the specific car's fair market value
+2. Provide negotiation strategies based on market conditions
+3. Generate reasonable offer/counter-offer suggestions
+4. Explain market factors affecting pricing
+5. Help with timing and seasonal market insights
+
+BUYER SCENARIOS:
+- Help buyers identify fair offers vs. overpriced listings
+- Suggest realistic offer ranges
+- Highlight negotiation leverage points
+
+SELLER SCENARIOS:
+- Help sellers set competitive prices
+- Suggest counter-offer strategies
+- Identify pricing advantages
+
+TONE: Professional, fair, market-informed, helpful"""
+    
+    return prompt
+
 @app.route('/api/chatbot', methods=['POST'])
 @require_auth
 def chatbot():
@@ -1233,10 +1347,10 @@ def chatbot():
         if not data:
             return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
         
-        query = data.get('query', '')
+        query = data.get('query', '').strip()
         api_key = data.get('api_key') or os.getenv('GEMINI_API_KEY')
         history = data.get('history', [])  # Client-provided conversation history
-        session_id = data.get('session') or request.args.get('session') or 'default'
+        session_id = data.get('session') or request.args.get('session') or f'session_{int(time.time())}'
         
         if not query:
             return jsonify({'success': False, 'error': 'Query is required'}), 400
@@ -1247,14 +1361,23 @@ def chatbot():
                 'error': 'API key is missing. Please add your Gemini API key.'
             }), 400
         
+        # Initialize session if needed
+        if session_id not in SESSION_STORE:
+            SESSION_STORE[session_id] = {
+                'history': [],
+                'created_at': datetime.now().isoformat(),
+                'mode': 'general',
+                'context': {}
+            }
+        
         # Merge with server-side session history
-        server_history = CHAT_SESSIONS.get(session_id, [])
+        server_history = SESSION_STORE[session_id].get('history', [])
         combined_history = server_history + history if history else server_history
 
-        # Limit combined history to last 15 messages to maintain context
-        if len(combined_history) > 15:
-            combined_history = combined_history[-15:]
-            print(f"⚠️ Conversation history truncated to last 15 messages for session {session_id}")
+        # Limit combined history to last 20 messages to maintain context
+        if len(combined_history) > 20:
+            combined_history = combined_history[-20:]
+            print(f"⚠️ Conversation history truncated to last 20 messages for session {session_id}")
         
         # Detect Arabic to respond in user's language
         is_arabic = bool(re.search(r"[\u0600-\u06FF]", query))
@@ -1534,7 +1657,7 @@ Remember: You have access to {len(relevant_cars)} cars in the catalog. Use this 
             message_id = f"msg_{int(time.time())}_{hashlib.md5(response_text.encode()).hexdigest()[:8]}"
             
             # Store response in session history
-            CHAT_SESSIONS[session_id] = combined_history + [{
+            SESSION_STORE[session_id]['history'] = combined_history + [{
                 'role': 'user',
                 'text': query
             }, {
@@ -1543,9 +1666,11 @@ Remember: You have access to {len(relevant_cars)} cars in the catalog. Use this 
                 'message_id': message_id
             }]
             
+            SESSION_STORE[session_id]['updated_at'] = datetime.now().isoformat()
+            
             # Limit session history size
-            if len(CHAT_SESSIONS[session_id]) > 20:
-                CHAT_SESSIONS[session_id] = CHAT_SESSIONS[session_id][-20:]
+            if len(SESSION_STORE[session_id]['history']) > 20:
+                SESSION_STORE[session_id]['history'] = SESSION_STORE[session_id]['history'][-20:]
             
             return jsonify({
                 'success': True,
@@ -1861,6 +1986,232 @@ def get_chatbot_stats():
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/assistant', methods=['POST'])
+@require_auth
+def unified_assistant():
+    """Unified AI Assistant - handles general queries, listing creation, and negotiation"""
+    if not REQUESTS_AVAILABLE:
+        return jsonify({
+            'success': False,
+            'error': 'Requests library not installed. Please install it with: pip install requests'
+        }), 500
+    
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'success': False, 'error': 'Invalid JSON data'}), 400
+        
+        query = data.get('query', '').strip()
+        api_key = data.get('api_key') or os.getenv('GEMINI_API_KEY')
+        history = data.get('history', [])
+        session_id = data.get('session') or request.args.get('session') or f'session_{int(time.time())}'
+        mode = data.get('mode', 'general')  # general, listing, negotiation
+        
+        if not query:
+            return jsonify({'success': False, 'error': 'Query is required'}), 400
+        
+        if not api_key or api_key.strip() == '':
+            return jsonify({
+                'success': False,
+                'error': 'API key is missing. Please add your Gemini API key.'
+            }), 400
+        
+        # Initialize session
+        if session_id not in SESSION_STORE:
+            SESSION_STORE[session_id] = {
+                'history': [],
+                'created_at': datetime.now().isoformat(),
+                'mode': mode,
+                'context': {}
+            }
+        
+        # Get user context
+        user_id = request.current_user['user_id']
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM cars WHERE user_id = ?', (user_id,))
+        listings_count = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM favorites WHERE user_id = ?', (user_id,))
+        favorites_count = cursor.fetchone()[0]
+        conn.close()
+        
+        user_context = {'listings_count': listings_count, 'favorites_count': favorites_count}
+        
+        # Detect intent and auto-adjust mode if needed
+        intent_obj = detect_user_intent(query)
+        intent = intent_obj['intent'] if isinstance(intent_obj, dict) else intent_obj
+        confidence = intent_obj['confidence'] if isinstance(intent_obj, dict) else 0.5
+        
+        # Auto-detect mode based on intent if mode is 'general'
+        if mode == 'general':
+            if intent in ['listing', 'selling']:
+                mode = 'listing'
+            elif intent == 'negotiation':
+                mode = 'negotiation'
+        
+        # Get relevant cars
+        currency = data.get('currency') or 'AED'
+        relevant_cars = query_cars_intelligently(query, intent, currency)
+        
+        # Ensure minimum context cars
+        if len(relevant_cars) < 10:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, make, model, year, price, currency, rating, reviews, specs, engines, statistics
+                FROM cars 
+                ORDER BY RANDOM() 
+                LIMIT 20
+            ''')
+            existing_ids = {c['id'] for c in relevant_cars}
+            for row in cursor.fetchall():
+                if row[0] not in existing_ids:
+                    relevant_cars.append({
+                        'id': row[0], 'make': row[1], 'model': row[2], 'year': row[3],
+                        'price': row[4], 'currency': row[5], 'rating': row[6] or 0.0,
+                        'reviews': row[7] or 0, 'specs': json.loads(row[8]) if row[8] else {},
+                        'engines': json.loads(row[9]) if row[9] else [],
+                        'statistics': json.loads(row[10]) if row[10] else {}
+                    })
+                    if len(relevant_cars) >= 20:
+                        break
+            conn.close()
+        
+        # Detect language
+        language = 'Arabic' if re.search(r"[\u0600-\u06FF]", query) else 'English'
+        
+        # Build appropriate system prompt
+        if mode == 'listing':
+            system_prompt = build_listing_system_prompt(relevant_cars, user_context, language)
+        elif mode == 'negotiation':
+            system_prompt = build_negotiation_system_prompt(relevant_cars, user_context, language)
+        else:
+            system_prompt = build_general_system_prompt(relevant_cars, user_context, language)
+        
+        # Get server history
+        server_history = SESSION_STORE[session_id].get('history', [])
+        combined_history = server_history + history if history else server_history
+        
+        if len(combined_history) > 20:
+            combined_history = combined_history[-20:]
+        
+        try:
+            # Call Gemini API
+            api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers = {
+                'Content-Type': 'application/json',
+                'X-goog-api-key': api_key
+            }
+            
+            # Build contents for API
+            contents = []
+            for msg in combined_history:
+                role = "user" if msg.get('role') == 'user' else "model"
+                contents.append({
+                    "parts": [{"text": msg.get('text', '')}],
+                    "role": role
+                })
+            
+            contents.append({
+                "parts": [{"text": query}],
+                "role": "user"
+            })
+            
+            payload = {
+                "contents": contents,
+                "systemInstruction": {
+                    "parts": [{"text": system_prompt}]
+                },
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                    "topK": 40,
+                    "maxOutputTokens": 2048
+                }
+            }
+            
+            response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.text else {}
+                error_msg = error_data.get('error', {}).get('message', f'HTTP {response.status_code}')
+                if response.status_code == 401:
+                    error_msg = "Invalid API key"
+                elif response.status_code == 429:
+                    error_msg = "API quota exceeded"
+                return jsonify({'success': False, 'error': f'Assistant Error: {error_msg}'}), 500
+            
+            response_data = response.json()
+            response_text = ""
+            
+            if 'candidates' in response_data and response_data['candidates']:
+                candidate = response_data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    for part in candidate['content']['parts']:
+                        if 'text' in part:
+                            response_text = part['text']
+                            break
+            
+            if not response_text:
+                response_text = "I'm sorry, I received an empty response. Please try again."
+            
+            # Extract listing data if in listing mode
+            listing_data = None
+            action_type = None
+            
+            if mode == 'listing':
+                json_match = re.search(r'\{[^{}]*"make"[^{}]*\}', response_text, re.IGNORECASE)
+                if json_match:
+                    try:
+                        listing_data = json.loads(json_match.group(0))
+                        if 'make' in listing_data and 'model' in listing_data:
+                            action_type = 'create_listing'
+                    except:
+                        pass
+            
+            # Generate message ID
+            message_id = f"msg_{int(time.time())}_{hashlib.md5(response_text.encode()).hexdigest()[:8]}"
+            
+            # Store in session
+            SESSION_STORE[session_id]['history'] = combined_history + [
+                {'role': 'user', 'text': query},
+                {'role': 'bot', 'text': response_text, 'message_id': message_id}
+            ]
+            SESSION_STORE[session_id]['updated_at'] = datetime.now().isoformat()
+            SESSION_STORE[session_id]['mode'] = mode
+            
+            if len(SESSION_STORE[session_id]['history']) > 20:
+                SESSION_STORE[session_id]['history'] = SESSION_STORE[session_id]['history'][-20:]
+            
+            # Extract mentioned car IDs
+            car_ids = []
+            for car in relevant_cars:
+                if car['make'].lower() in response_text.lower() and car['model'].lower() in response_text.lower():
+                    car_ids.append(car['id'])
+            
+            return jsonify({
+                'success': True,
+                'response': response_text,
+                'mode': mode,
+                'intent': intent,
+                'confidence': confidence,
+                'message_id': message_id,
+                'relevant_car_ids': car_ids[:5],
+                'action_type': action_type,
+                'listing_data': listing_data
+            })
+            
+        except requests.exceptions.Timeout:
+            return jsonify({'success': False, 'error': 'Request timeout. Please try again.'}), 500
+        except Exception as api_error:
+            return jsonify({'success': False, 'error': f'Assistant Error: {str(api_error)}'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Assistant error: {str(e)}'}), 500
 
 @app.route('/api/listing-assistant', methods=['POST'])
 @require_auth
